@@ -428,7 +428,11 @@ export function parsePdfStatement(text: string, options: ImportOptions = {}, con
   }
   const strict = collect(false)
   const loose = collect(true)
-  const { candidates, opening, closing, ...counts } = loose.candidates.length > strict.candidates.length ? loose : strict
+  const { candidates, opening, closing: closingLine, ...counts } = loose.candidates.length > strict.candidates.length ? loose : strict
+  // Yonder: "Total Bill for February 2026 £3,578.89" … "Total Bill for March 2026 £1,737.15"; the last one is this bill.
+  const totalBill = lines.filter((l) => /^total\s+bill\s+for\b/i.test(l)).at(-1)
+  const totalBillAmount = totalBill ? TRAILING_AMOUNT.exec(totalBill) : null
+  const closing = closingLine ?? (totalBillAmount ? amountValue(totalBillAmount[1]).cents : null)
   let skippedRows = counts.skippedRows
 
   const transactions: ParsedTransaction[] = []
@@ -467,6 +471,16 @@ export function parsePdfStatement(text: string, options: ImportOptions = {}, con
     if (options.invertAmounts) amount = -amount
     transactions.push({ date, amount, description: c.description })
   })
+
+  // Yonder only shows payments in its summary: "Payments made towards last bill +£3,809.49".
+  const summaryPayment = account.isCard ? lines.find((l) => /^payments?\s+made\s+towards\s+(your\s+)?last\s+bill\b/i.test(l)) : undefined
+  const summaryPaymentAmount = summaryPayment ? TRAILING_AMOUNT.exec(summaryPayment) : null
+  if (summaryPaymentAmount && !transactions.some((t) => t.amount > 0 && CARD_PAYMENT.test(t.description))) {
+    const cents = amountValue(summaryPaymentAmount[1]).cents
+    const period = lines.find((l) => /statement\s+period/i.test(l))
+    const start = period ? [...period.matchAll(FULL_DATE)].map((d) => parseDate(d[1], dateFormat)).find(Boolean) : null
+    if (cents) transactions.push({ date: start ?? ref, amount: cents, description: 'Payment received (from statement summary)' })
+  }
 
   if (transactions.length === 0) {
     errors.push('No transactions found in this PDF. If it is a scanned image or an unusual layout, try the CSV or OFX download from your bank instead.')
