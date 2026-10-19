@@ -39,6 +39,26 @@ describe('UK statements', () => {
     expect(s.ledgerBalance).toEqual({ date: '2026-10-14', balance: -43410 })
   })
 
+  it('Amex: payments printed without a sign, CR in its own column, card detected from the issuer name', async () => {
+    const page = statementPage([
+      [[40, 'American Express']],
+      [[40, 'Statement Date 14 October 2026']],
+      [[40, 'New Transactions']],
+      [[40, 'Sep 18'], [100, 'PAYMENT RECEIVED - THANK YOU'], [480, '500.00']],
+      [[40, 'Sep 19'], [100, 'DIRECT DEBIT PAYMENT'], [440, '250.00'], [500, 'CR']],
+      [[40, 'Sep 20'], [100, 'REFUND JOHN LEWIS'], [480, '£30.00']],
+      [[40, 'Sep 21'], [100, 'WAITROSE 123 LONDON'], [480, '£42.10']]
+    ])
+    const s = parsePdfStatement(await extractPdfText(makePdf([page])))
+    expect(s.account?.type).toBe('credit_card')
+    expect(rows(s).map(([, amount, description]) => [description, amount])).toEqual([
+      ['PAYMENT RECEIVED - THANK YOU', 50000],
+      ['DIRECT DEBIT PAYMENT', 25000],
+      ['REFUND JOHN LEWIS', 3000],
+      ['WAITROSE 123 LONDON', -4210]
+    ])
+  })
+
   it('Yonder: day-first numeric dates on a British statement, £ signs', () => {
     const text = [
       'Yonder',

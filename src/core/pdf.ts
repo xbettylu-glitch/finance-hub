@@ -23,7 +23,7 @@ const LEADING_DATE: { re: RegExp; parse: (m: RegExpExecArray, dmy: boolean) => {
 const CURRENCY_CODE = String.raw`(?:GBP|EUR|USD|CAD)`
 const CURRENCY_SIGN = String.raw`(?:CA\$|C\$|US\$|A\$|[$£€])`
 const NUMBER = String.raw`(?:\d{1,3}(?:,\d{3})+|\d+)\.\d{2}`
-const AMOUNT_TOKEN = String.raw`(?:[-+−–]\s?)?\(?(?:${CURRENCY_CODE}\s?)?${CURRENCY_SIGN}?\s?[-−–]?${NUMBER}\)?(?:\s?${CURRENCY_CODE})?(?:\s?(?:CR|DR|-))?`
+const AMOUNT_TOKEN = String.raw`(?:[-+−–]\s?)?\(?(?:${CURRENCY_CODE}\s?)?${CURRENCY_SIGN}?\s?[-−–]?${NUMBER}\)?(?:\s?${CURRENCY_CODE})?(?:\s*(?:CR|DR)|\s?-)?`
 /** An amount at the end of a line, optionally followed by a footnote marker (Amex uses ⧫ / *). */
 const TRAILING_AMOUNT = new RegExp(String.raw`(?:^|\s)(${AMOUNT_TOKEN})(?:\s*[*⧫◆♦†])?\s*$`, 'i')
 const LEADING_MARKER = /^[*•·◆♦⧫]\s*/
@@ -39,6 +39,8 @@ const DEBIT_SECTION =
   /^(withdrawals?|debits?|checks?(\s+paid)?|electronic\s+(withdrawals|payments|debits)|atm\b|atm\s+(&|and)\s+debit|(debit\s+)?card\s+(purchases|transactions)|purchases?|fees?(\s+charged)?|interest\s+charged|other\s+(withdrawals|debits)|service\s+(charges|fees)|purchases?\s+(and|&)\s+(adjustments|other\s+charges|cash\s+advances)|new\s+(charges|transactions)|(other\s+)?charges$|money\s+out$|your\s+(new\s+)?transactions)\b/i
 /** On card statements a bare "Payments" heading lists money paid to the card. */
 const CARD_CREDIT_SECTION = /^payments?(\s+and\s+(other\s+)?credits)?$/i
+/** Card lines that are money paid to the card or refunded, even when printed without a sign. */
+const CARD_PAYMENT = /\bpayments?\b.*\b(received|thank\s*you|merci)\b|\bthank\s*you\b|\bpaiement\b|\bdirect\s+debit\b|\bautopay\b|\b(refund|cashback|reward\s+credit|statement\s+credit)\b/i
 /** A table's column header row, e.g. "Date Description Amount" or "Trans. Date Post Date ...". */
 const COLUMN_HEADER = /^(trans(action)?\.?\s+|posting\s+|completed\s+)?date\b/i
 const COLUMN_WORDS = /\b(date|description|details|amount|balance|money\s+(in|out)|paid\s+(in|out)|incoming|outgoing|debits?|credits?)\b/gi
@@ -176,7 +178,7 @@ function resolveDate(date: Candidate['date'], ref: string | null): string | null
 
 function detectAccount(text: string): { externalId?: string; type?: AccountType; institution?: string; isCard: boolean } {
   const head = text.split('\n').slice(0, 80).join('\n')
-  const isCard = /minimum\s+payment|credit\s+(limit|line)|available\s+credit|card\s*member|credit\s+card/i.test(text)
+  const isCard = /minimum\s+payment|credit\s+(limit|line)|available\s+credit|card\s*member|credit\s+card|american\s+express|\bamex\b|membership\s+number|payment\s+due\s+date/i.test(text)
   let type: AccountType | undefined
   if (isCard) type = 'credit_card'
   else if (/savings|\bISA\b/i.test(head)) type = 'savings'
@@ -395,6 +397,7 @@ export function parsePdfStatement(text: string, options: ImportOptions = {}): Pa
     if (sign === null || sign === 0) {
       if (explicitCredit) sign = 1
       else if (explicitNegative) sign = account.isCard ? 1 : -1
+      else if (account.isCard && CARD_PAYMENT.test(c.description)) sign = 1
       else if (c.section !== 0) sign = c.section
       else sign = signedAmounts ? 1 : -1
     }
