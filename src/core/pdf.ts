@@ -23,7 +23,9 @@ const LEADING_DATE: { re: RegExp; parse: (m: RegExpExecArray, dmy: boolean) => {
 const CURRENCY_CODE = String.raw`(?:GBP|EUR|USD|CAD)`
 const CURRENCY_SIGN = String.raw`(?:CA\$|C\$|US\$|A\$|[$£€])`
 const NUMBER = String.raw`(?:\d{1,3}(?:,\d{3})+|\d+)\.\d{2}`
-const AMOUNT_TOKEN = String.raw`(?:[-+−–]\s?)?\(?(?:${CURRENCY_CODE}\s?)?${CURRENCY_SIGN}?\s?[-−–]?${NUMBER}\)?(?:\s?${CURRENCY_CODE})?(?:\s*(?:CR|DR)|\s?-)?`
+/** Whole amounts such as Yonder's "£15" only count with a currency sign. */
+const WHOLE_NUMBER = String.raw`(?:\d{1,3}(?:,\d{3})+|\d+)(?![.,]?\d)`
+const AMOUNT_TOKEN = String.raw`(?:[-+−–]\s?)?\(?(?:${CURRENCY_CODE}\s?)?(?:${CURRENCY_SIGN}?\s?[-−–]?${NUMBER}|${CURRENCY_SIGN}\s?[-−–]?${WHOLE_NUMBER})\)?(?:\s?${CURRENCY_CODE})?(?:\s*(?:CR|DR)|\s?-)?`
 /** An amount at the end of a line, optionally followed by a footnote marker (Amex uses ⧫ / *). */
 const TRAILING_AMOUNT = new RegExp(String.raw`(?:^|\s)(${AMOUNT_TOKEN})(?:\s*[*⧫◆♦†])?\s*$`, 'i')
 const LEADING_MARKER = /^[*•·◆♦⧫]\s*/
@@ -238,11 +240,22 @@ function dateFromFilename(filename: string): string | null {
   return `${year}-${String(m).padStart(2, '0')}-${String(daysInMonth(+year, m)).padStart(2, '0')}`
 }
 
+/** Some PDFs (e.g. Yonder) store text with HTML entities such as "Wasabi Sushi &amp; Bento". */
+function decodeEntities(line: string): string {
+  return line
+    .replace(/&(quot|#34);/g, '"')
+    .replace(/&(apos|#39);/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+}
+
 export function parsePdfStatement(text: string, options: ImportOptions = {}, context: { filename?: string; today?: string } = {}): ParsedStatement {
   const today = context.today ?? todayIso()
   const lines = text
     .split(/\r?\n/)
-    .map((l) => l.replace(/\s+/g, ' ').trim())
+    .map((l) => decodeEntities(l).replace(/\s+/g, ' ').trim())
     .filter(Boolean)
   const errors: string[] = []
   if (lines.length === 0) {
