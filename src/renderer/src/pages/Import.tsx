@@ -24,8 +24,8 @@ function ExtractedText({ text }: { text: string }): JSX.Element {
     <details className="extracted-text">
       <summary>Show the text the app read</summary>
       <p className="muted">
-        These are the lines found in the PDF. Transactions need a date at the start of the line and an amount at the end. To get help with this layout, copy a few
-        transaction lines, replace names and numbers with made-up ones, and share them.
+        These are the lines found in the PDF. Transactions need a date at the start of the line and an amount at the end. If rows are missing or read wrong,
+        copy a few of those lines, replace names and numbers with made-up ones, and share them.
       </p>
       <textarea readOnly value={text} rows={14} />
       <button
@@ -364,7 +364,7 @@ export function Import({ navigate, onChange, version }: PageProps) {
                 {e}
               </div>
             ))}
-            {preview.format === 'pdf' && preview.transactions.length === 0 && current.text.trim() && <ExtractedText text={current.text} />}
+            {preview.format === 'pdf' && current.text.trim() && <ExtractedText text={current.text} />}
             <div className="form">
               <div className="row">
                 <label>
