@@ -40,7 +40,7 @@ const DEBIT_SECTION =
 /** On card statements a bare "Payments" heading lists money paid to the card. */
 const CARD_CREDIT_SECTION = /^payments?(\s+and\s+(other\s+)?credits)?$/i
 /** Card lines that are money paid to the card or refunded, even when printed without a sign. */
-const CARD_PAYMENT = /\bpayments?\b.*\b(received|thank\s*you|merci)\b|\bthank\s*you\b|\bpaiement\b|\bdirect\s+debit\b|\bautopay\b|\b(refund|cashback|reward\s+credit|statement\s+credit)\b/i
+const CARD_PAYMENT = /\bpayments?\b.*\b(received|thank\s*you|merci)\b|\bthank\s*you\b|\bpaiement\b|\bdirect\s+debit\b|\bautopay\b|\b(refund|reimburse(ment|d)?|cashback|reward\s+credit|statement\s+credit)\b/i
 /** A table's column header row, e.g. "Date Description Amount" or "Trans. Date Post Date ...". */
 const COLUMN_HEADER = /^(trans(action)?\.?\s+|posting\s+|completed\s+)?date\b/i
 const COLUMN_WORDS = /\b(date|description|details|amount|balance|money\s+(in|out)|paid\s+(in|out)|incoming|outgoing|debits?|credits?)\b/gi
@@ -111,7 +111,7 @@ interface Candidate {
 
 function amountValue(token: string): { cents: number; explicitNegative: boolean; explicitCredit: boolean } {
   const t = token.replace(/\s+/g, '').replace(/[−–]/g, '-')
-  const explicitCredit = /CR$/i.test(t)
+  const explicitCredit = /CR$/i.test(t) || /^\+/.test(t)
   const core = t.replace(/(CR|DR)$/i, '').replace(/GBP|EUR|USD|CAD|CA\$|C\$|US\$|A\$|[$£€]/gi, '')
   const explicitNegative = /^-|^\(|\)$|-$/.test(core) || /DR$/i.test(t)
   const digits = t.replace(/[^\d.]/g, '')
