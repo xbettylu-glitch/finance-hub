@@ -4,12 +4,14 @@ import { ACCOUNT_TYPES, accountGroup, accountTypeLabel, isLiability, type Accoun
 import type { PageProps } from '../App'
 import { api } from '../api'
 import { Card, Empty, ErrorBanner, Modal, Money } from '../components/ui'
-import { centsFromInput, inputFromCents, shortDate } from '../format'
+import { CURRENCIES } from '../../../core/currency'
+import { centsFromInput, getDisplayCurrency, inputFromCents, shortDate } from '../format'
 
 export function AccountForm({ account, onClose, onSaved }: { account?: AccountWithBalance; onClose: () => void; onSaved: () => void }) {
   const [name, setName] = useState(account?.name ?? '')
   const [institution, setInstitution] = useState(account?.institution ?? '')
   const [type, setType] = useState<AccountType>(account?.type ?? 'checking')
+  const [currency, setCurrency] = useState(account?.currency ?? getDisplayCurrency())
   const [balance, setBalance] = useState('')
   const [error, setError] = useState<string | null>(null)
   const liability = isLiability(type)
@@ -17,11 +19,11 @@ export function AccountForm({ account, onClose, onSaved }: { account?: AccountWi
   const save = async (): Promise<void> => {
     try {
       if (account) {
-        await api.updateAccount(account.id, { name, institution, type })
+        await api.updateAccount(account.id, { name, institution, type, currency })
       } else {
         const cents = balance.trim() ? centsFromInput(balance) : null
         if (balance.trim() && cents == null) throw new Error('Enter the balance as a number, e.g. 1250.00')
-        await api.createAccount({ name, institution, type, openingBalance: cents == null ? undefined : liability ? -Math.abs(cents) : cents })
+        await api.createAccount({ name, institution, type, currency, openingBalance: cents == null ? undefined : liability ? -Math.abs(cents) : cents })
       }
       onSaved()
       onClose()
@@ -55,6 +57,16 @@ export function AccountForm({ account, onClose, onSaved }: { account?: AccountWi
               {ACCOUNT_TYPES.map((t) => (
                 <option key={t.type} value={t.type}>
                   {t.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Currency
+            <select value={currency} onChange={(e) => setCurrency(e.target.value)}>
+              {CURRENCIES.map((c) => (
+                <option key={c.code} value={c.code}>
+                  {c.code} · {c.name}
                 </option>
               ))}
             </select>
@@ -112,7 +124,7 @@ function BalanceModal({ account, onClose, onSaved }: { account: AccountWithBalan
             <input type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
           </label>
           <label>
-            {liability ? 'Amount owed' : 'Balance / value'}
+            {liability ? 'Amount owed' : 'Balance / value'} ({account.currency})
             <input autoFocus value={value} onChange={(e) => setValue(e.target.value)} inputMode="decimal" />
           </label>
         </div>
@@ -134,7 +146,7 @@ function BalanceModal({ account, onClose, onSaved }: { account: AccountWithBalan
                 <tr key={h.id}>
                   <td>{shortDate(h.date)}</td>
                   <td className="num">
-                    <Money cents={h.balance} />
+                    <Money cents={h.balance} currency={account.currency} />
                   </td>
                   <td className="num">
                     <button
@@ -197,7 +209,7 @@ export function Accounts({ navigate, onChange, version }: PageProps) {
           title={group}
           action={
             <strong>
-              <Money cents={list.reduce((s, a) => s + a.balance, 0)} />
+              <Money cents={list.reduce((s, a) => s + a.balanceHome, 0)} />
             </strong>
           }
         >
@@ -225,7 +237,12 @@ export function Accounts({ navigate, onChange, version }: PageProps) {
                     {a.transactionCount > 0 ? <a onClick={() => navigate({ page: 'transactions', query: { accountId: a.id } })}>{a.transactionCount}</a> : '—'}
                   </td>
                   <td className="num">
-                    <Money cents={a.balance} />
+                    <Money cents={a.balance} currency={a.currency} />
+                    {a.currency !== getDisplayCurrency() && (
+                      <div className="muted small">
+                        ≈ <Money cents={a.balanceHome} />
+                      </div>
+                    )}
                   </td>
                   <td className="num" style={{ whiteSpace: 'nowrap' }}>
                     <button onClick={() => setBalanceFor(a)}>Update balance</button>{' '}

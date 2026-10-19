@@ -173,6 +173,7 @@ export function Transactions({ initialQuery, onChange, version }: PageProps & { 
     setQuery((q) => ({ ...q, ...patch }))
   }
   const pageTotal = data.rows.reduce((s, r) => s + r.amount, 0)
+  const pageCurrencies = [...new Set(data.rows.map((r) => r.currency))]
 
   return (
     <>
@@ -274,7 +275,7 @@ export function Transactions({ initialQuery, onChange, version }: PageProps & { 
                     />
                   </td>
                   <td className="num">
-                    <Money cents={t.amount} colored />
+                    <Money cents={t.amount} colored currency={t.currency} />
                   </td>
                   <td className="num" style={{ whiteSpace: 'nowrap' }}>
                     <button className="link" onClick={() => setRuleFor(t)} title="Always categorize transactions like this one">
@@ -299,7 +300,13 @@ export function Transactions({ initialQuery, onChange, version }: PageProps & { 
         )}
         <div className="pager">
           <span className="muted small">
-            {data.total === 0 ? '0' : `${page * PAGE_SIZE + 1}–${page * PAGE_SIZE + data.rows.length}`} of {data.total} · net on this page <Money cents={pageTotal} colored />
+            {data.total === 0 ? '0' : `${page * PAGE_SIZE + 1}–${page * PAGE_SIZE + data.rows.length}`} of {data.total}
+            {pageCurrencies.length === 1 && (
+              <>
+                {' '}
+                · net on this page <Money cents={pageTotal} colored currency={pageCurrencies[0]} />
+              </>
+            )}
           </span>
           <span>
             <button disabled={page === 0} onClick={() => setPage((p) => p - 1)}>

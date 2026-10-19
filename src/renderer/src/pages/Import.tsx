@@ -3,7 +3,8 @@ import { ACCOUNT_TYPES, isLiability, type AccountType, type AccountWithBalance, 
 import type { PageProps } from '../App'
 import { api } from '../api'
 import { Card, ErrorBanner, Money } from '../components/ui'
-import { centsFromInput, inputFromCents, shortDate } from '../format'
+import { CURRENCIES } from '../../../core/currency'
+import { centsFromInput, getDisplayCurrency, inputFromCents, shortDate } from '../format'
 
 interface PendingFile {
   name: string
@@ -58,11 +59,13 @@ async function unlockPdf(name: string, data: Uint8Array, password?: string): Pro
 
 function PreviewRow({
   txn,
+  currency,
   included,
   onToggle,
   onEdit
 }: {
   txn: ParsedTransaction
+  currency: string
   included: boolean
   onToggle: () => void
   onEdit: (patch: Partial<ParsedTransaction>) => void
@@ -110,7 +113,7 @@ function PreviewRow({
       <td className="muted">{shortDate(txn.date)}</td>
       <td>{txn.description}</td>
       <td className="num">
-        <Money cents={txn.amount} colored />
+        <Money cents={txn.amount} colored currency={currency} />
       </td>
       <td className="num">
         <button
@@ -154,6 +157,7 @@ export function Import({ navigate, onChange, version }: PageProps) {
   const [newName, setNewName] = useState('')
   const [newInstitution, setNewInstitution] = useState('')
   const [newType, setNewType] = useState<AccountType>('checking')
+  const [newCurrency, setNewCurrency] = useState(getDisplayCurrency())
   const [error, setError] = useState<string | null>(null)
   const [results, setResults] = useState<{ file: string; result: ImportResult; account: string }[]>([])
   const [busy, setBusy] = useState(false)
@@ -188,6 +192,7 @@ export function Import({ navigate, onChange, version }: PageProps) {
       setNewName(guessName(current.name))
       setNewInstitution(p.account?.institution ?? '')
       setNewType(p.account?.type ?? 'checking')
+      setNewCurrency(p.currency ?? getDisplayCurrency())
     })
   }, [current])
 
@@ -234,7 +239,9 @@ export function Import({ navigate, onChange, version }: PageProps) {
   const rows = preview ? preview.transactions.map((t, i) => ({ ...t, ...edits[i] })) : []
   const includedCount = rows.length - excluded.size
 
-  const targetType: AccountType | undefined = target === 'new' ? newType : accounts.find((a) => a.id === target)?.type
+  const targetAccount = target === 'new' ? undefined : accounts.find((a) => a.id === target)
+  const targetType: AccountType | undefined = target === 'new' ? newType : targetAccount?.type
+  const targetCurrency = target === 'new' ? newCurrency : (targetAccount?.currency ?? getDisplayCurrency())
   const suggestInvert = preview && targetType && isLiability(targetType) && preview.positiveShare > 0.6 && !invert
 
   const commit = async (): Promise<void> => {
@@ -247,7 +254,7 @@ export function Import({ navigate, onChange, version }: PageProps) {
         text: current.text,
         options: { mapping, dateFormat, invertAmounts: invert },
         accountId: target === 'new' ? undefined : target,
-        newAccount: target === 'new' ? { name: newName, institution: newInstitution, type: newType } : undefined,
+        newAccount: target === 'new' ? { name: newName, institution: newInstitution, type: newType, currency: newCurrency } : undefined,
         excluded: [...excluded],
         edits
       })
@@ -372,6 +379,11 @@ export function Import({ navigate, onChange, version }: PageProps) {
                     ))}
                   </select>
                 </label>
+                {targetAccount && preview.currency && preview.currency !== targetAccount.currency && (
+                  <div className="banner warn" style={{ alignSelf: 'end', marginBottom: 0 }}>
+                    This statement looks like it&apos;s in {preview.currency}, but {targetAccount.name} is a {targetAccount.currency} account.
+                  </div>
+                )}
                 {preview.matchedAccountId != null && target === preview.matchedAccountId && (
                   <div className="muted small" style={{ alignSelf: 'end', paddingBottom: 8 }}>
                     Matched by account number {preview.account?.externalId}
@@ -394,6 +406,16 @@ export function Import({ navigate, onChange, version }: PageProps) {
                       {ACCOUNT_TYPES.map((t) => (
                         <option key={t.type} value={t.type}>
                           {t.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Currency
+                    <select value={newCurrency} onChange={(e) => setNewCurrency(e.target.value)}>
+                      {CURRENCIES.map((c) => (
+                        <option key={c.code} value={c.code}>
+                          {c.code} · {c.name}
                         </option>
                       ))}
                     </select>
@@ -467,7 +489,7 @@ export function Import({ navigate, onChange, version }: PageProps) {
             action={
               preview.ledgerBalance && (
                 <span className="muted small">
-                  Balance on {shortDate(preview.ledgerBalance.date)}: <Money cents={preview.ledgerBalance.balance} />
+                  Balance on {shortDate(preview.ledgerBalance.date)}: <Money cents={preview.ledgerBalance.balance} currency={targetCurrency} />
                 </span>
               )
             }
@@ -495,6 +517,7 @@ export function Import({ navigate, onChange, version }: PageProps) {
                     <PreviewRow
                       key={`${current.name}-${i}-${t.date}-${t.amount}`}
                       txn={t}
+                      currency={targetCurrency}
                       included={!excluded.has(i)}
                       onToggle={() =>
                         setExcluded((prev) => {
