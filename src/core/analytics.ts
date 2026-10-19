@@ -347,11 +347,22 @@ export function spendingInsights(input: {
   const target = current ? month : addMonths(month, -1)
   const scale = current ? pace : 1
   const when = current ? 'this month' : 'last month'
+  // Only everyday spending is projected forward; bills already paid this month (rent, mortgage) are counted as they are.
+  const recurringSpend = new Map(
+    spendingReport(
+      txns.filter((t) => recurringPayees.has(t.payee)),
+      categories,
+      target,
+      1,
+      new Set()
+    ).categories.map((c) => [c.categoryId, c.monthly[0]])
+  )
   for (const c of spendingReport(txns, categories, target, 7, new Set()).categories) {
     const history = c.monthly.slice(0, 6).filter((v) => v > 0)
     if (history.length < 2) continue
     const avg = history.reduce((s, v) => s + v, 0) / history.length
-    const projected = c.monthly[6] * scale
+    const fixedPart = recurringSpend.get(c.categoryId) ?? 0
+    const projected = (c.monthly[6] - fixedPart) * scale + fixedPart
     const over = Math.round(projected - avg)
     if (projected > avg * 1.2 && over >= 2000)
       out.push({
