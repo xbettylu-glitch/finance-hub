@@ -163,7 +163,7 @@ export interface StatementAccountInfo {
 }
 
 export interface ParsedStatement {
-  format: 'csv' | 'ofx'
+  format: 'csv' | 'ofx' | 'pdf'
   transactions: ParsedTransaction[]
   headers?: string[]
   mapping?: ColumnMapping
@@ -185,6 +185,10 @@ export interface ImportRequest {
   options: ImportOptions
   accountId?: number
   newAccount?: NewAccount
+  /** Indexes (into the parsed transactions) the user unticked in the preview. */
+  excluded?: number[]
+  /** Per-row corrections made in the preview, keyed by index into the parsed transactions. */
+  edits?: Record<number, Partial<Pick<ParsedTransaction, 'date' | 'amount' | 'description'>>>
 }
 
 export interface ImportResult {
@@ -293,6 +297,8 @@ export interface FinanceApi {
   listBudgets(): Promise<Budget[]>
   setBudget(categoryId: number, amount: number): Promise<void>
   getBudgetOverview(month?: string): Promise<{ month: string; rows: BudgetOverviewRow[] }>
+  /** Returns the text of a PDF statement, one visual line per line, for `previewImport`/`commitImport`. */
+  extractPdfText(data: Uint8Array, password?: string): Promise<string>
   previewImport(filename: string, text: string, options: ImportOptions): Promise<ImportPreview>
   commitImport(request: ImportRequest): Promise<ImportResult>
   loadDemoData(): Promise<void>

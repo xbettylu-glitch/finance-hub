@@ -14,9 +14,10 @@ A local-first desktop app (macOS, Windows, Linux) that brings all your accounts 
 
 ## Getting your data in
 
-- **Import statements**: CSV, OFX, QFX or QBO files downloaded from your bank or card's website.
+- **Import statements**: PDF, CSV, OFX, QFX or QBO files downloaded from your bank or card's website.
   - Columns are detected automatically and can be mapped by hand. This covers debit/credit columns, preamble lines, header-less files, DD/MM dates and sign flipping for card exports.
   - OFX/QFX files are matched to the right account by account number, and the statement balance is recorded.
+  - PDF statements are read from their text. The app finds the dated transaction lines, then works out money in vs. out from the running balance, the +/−/CR/DR markers, or section headings like "Deposits" and "Withdrawals". It also picks up the account number, the bank's name and the closing balance. In the preview you can untick or edit rows before importing, and password-protected PDFs ask for their password. Scanned (image-only) PDFs can't be read.
   - Re-importing a file, or importing overlapping date ranges, skips transactions that are already there.
   - Transactions are categorized by about 20 built-in rules plus any rules you add. Matching opposite amounts between your own accounts are marked as transfers.
 - **Manual balances**: for a 401(k), your home, a car or a loan, enter the balance from time to time and the app builds the history.
@@ -41,8 +42,8 @@ The database lives in the OS app-data folder (shown under Settings). Set `FINANC
 
 | Path | What's there |
 | --- | --- |
-| `src/core/` | Pure TypeScript logic: CSV/OFX parsing, dates & amounts, payee cleanup, rules, transfer matching, balance history, cash flow, recurring detection, demo data |
-| `src/main/` | Electron main process: `store.ts` (SQLite schema and queries through sql.js), `db.ts` (load/save the file), `index.ts` (window and IPC) |
+| `src/core/` | Pure TypeScript logic: CSV/OFX/PDF-statement parsing, dates & amounts, payee cleanup, rules, transfer matching, balance history, cash flow, recurring detection, demo data |
+| `src/main/` | Electron main process: `store.ts` (SQLite schema and queries through sql.js), `db.ts` (load/save the file), `pdf.ts` (PDF text extraction with pdf.js), `index.ts` (window and IPC) |
 | `src/preload/` | Exposes a single `invoke` bridge to the UI (context isolation on, sandboxed, no Node access in the UI) |
 | `src/renderer/` | React UI: Overview, Accounts, Transactions, Budgets, Import, Categories & rules, Settings |
 | `tests/` | Vitest suites and sample bank files |

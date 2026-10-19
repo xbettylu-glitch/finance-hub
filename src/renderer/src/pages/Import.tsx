@@ -1,13 +1,110 @@
 import { useEffect, useRef, useState } from 'react'
-import { ACCOUNT_TYPES, isLiability, type AccountType, type AccountWithBalance, type ColumnMapping, type DateFormat, type ImportPreview, type ImportResult } from '../../../shared/types'
+import { ACCOUNT_TYPES, isLiability, type AccountType, type AccountWithBalance, type ColumnMapping, type DateFormat, type ImportPreview, type ImportRequest, type ImportResult, type ParsedTransaction } from '../../../shared/types'
 import type { PageProps } from '../App'
 import { api } from '../api'
 import { Card, ErrorBanner, Money } from '../components/ui'
-import { shortDate } from '../format'
+import { centsFromInput, inputFromCents, shortDate } from '../format'
 
 interface PendingFile {
   name: string
   text: string
+  /** Set while a PDF waits for its password. */
+  locked?: { data: Uint8Array; wrongPassword: boolean }
+}
+
+type RowEdits = NonNullable<ImportRequest['edits']>
+
+const isPdf = (name: string): boolean => /\.pdf$/i.test(name)
+
+async function loadFile(f: File): Promise<PendingFile> {
+  if (!isPdf(f.name)) return { name: f.name, text: await f.text() }
+  const data = new Uint8Array(await f.arrayBuffer())
+  return unlockPdf(f.name, data)
+}
+
+async function unlockPdf(name: string, data: Uint8Array, password?: string): Promise<PendingFile> {
+  try {
+    return { name, text: await api.extractPdfText(data, password) }
+  } catch (e) {
+    const message = (e as Error).message
+    if (message === 'PDF_PASSWORD_REQUIRED' || message === 'PDF_PASSWORD_INCORRECT') {
+      return { name, text: '', locked: { data, wrongPassword: message === 'PDF_PASSWORD_INCORRECT' } }
+    }
+    throw e
+  }
+}
+
+function PreviewRow({
+  txn,
+  included,
+  onToggle,
+  onEdit
+}: {
+  txn: ParsedTransaction
+  included: boolean
+  onToggle: () => void
+  onEdit: (patch: Partial<ParsedTransaction>) => void
+}) {
+  const [editing, setEditing] = useState(false)
+  const [date, setDate] = useState(txn.date)
+  const [description, setDescription] = useState(txn.description)
+  const [amount, setAmount] = useState(inputFromCents(txn.amount))
+  const cents = centsFromInput(amount)
+  const valid = Boolean(date) && description.trim() !== '' && cents !== null
+
+  if (editing) {
+    return (
+      <tr>
+        <td />
+        <td>
+          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} aria-label="Date" />
+        </td>
+        <td>
+          <input style={{ width: '100%' }} value={description} onChange={(e) => setDescription(e.target.value)} aria-label="Description" />
+        </td>
+        <td className="num">
+          <input style={{ width: 110, textAlign: 'right' }} value={amount} onChange={(e) => setAmount(e.target.value)} aria-label="Amount" />
+        </td>
+        <td className="num">
+          <button
+            className="link"
+            disabled={!valid}
+            onClick={() => {
+              onEdit({ date, description: description.trim(), amount: cents! })
+              setEditing(false)
+            }}
+          >
+            Done
+          </button>
+        </td>
+      </tr>
+    )
+  }
+  return (
+    <tr className={included ? undefined : 'excluded'}>
+      <td>
+        <input type="checkbox" checked={included} onChange={onToggle} aria-label={`Include ${txn.description}`} />
+      </td>
+      <td className="muted">{shortDate(txn.date)}</td>
+      <td>{txn.description}</td>
+      <td className="num">
+        <Money cents={txn.amount} colored />
+      </td>
+      <td className="num">
+        <button
+          className="link"
+          onClick={() => {
+            setDate(txn.date)
+            setDescription(txn.description)
+            setAmount(inputFromCents(txn.amount))
+            setEditing(true)
+          }}
+        >
+          Edit
+        </button>
+      </td>
+    </tr>
+  )
 }
 
 const MAPPING_FIELDS: { key: keyof ColumnMapping; label: string; required?: boolean }[] = [
@@ -38,8 +135,16 @@ export function Import({ navigate, onChange, version }: PageProps) {
   const [error, setError] = useState<string | null>(null)
   const [results, setResults] = useState<{ file: string; result: ImportResult; account: string }[]>([])
   const [busy, setBusy] = useState(false)
+  const [excluded, setExcluded] = useState<Set<number>>(new Set())
+  const [edits, setEdits] = useState<RowEdits>({})
+  const [password, setPassword] = useState('')
   const input = useRef<HTMLInputElement>(null)
   const current = queue[0]
+
+  const resetRows = (): void => {
+    setExcluded(new Set())
+    setEdits({})
+  }
 
   useEffect(() => {
     void api.listAccounts().then(setAccounts)
@@ -47,7 +152,8 @@ export function Import({ navigate, onChange, version }: PageProps) {
 
   // New file: detect everything from scratch.
   useEffect(() => {
-    if (!current) return
+    if (!current || current.locked) return
+    resetRows()
     setMapping(undefined)
     setDateFormat('auto')
     setInvert(false)
@@ -65,17 +171,46 @@ export function Import({ navigate, onChange, version }: PageProps) {
 
   // Options changed: re-parse.
   useEffect(() => {
-    if (!current || !preview) return
+    if (!current || current.locked || !preview) return
+    resetRows()
     void api.previewImport(current.name, current.text, { mapping, dateFormat, invertAmounts: invert }).then(setPreview)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mapping, dateFormat, invert])
 
   const addFiles = async (files: FileList | null): Promise<void> => {
     if (!files) return
-    const loaded = await Promise.all([...files].map(async (f) => ({ name: f.name, text: await f.text() })))
-    setResults([])
-    setQueue((q) => [...q, ...loaded])
+    setError(null)
+    try {
+      const loaded = await Promise.all([...files].map(loadFile))
+      setResults([])
+      setQueue((q) => [...q, ...loaded])
+    } catch (e) {
+      setError((e as Error).message)
+    }
   }
+
+  const unlock = async (): Promise<void> => {
+    if (!current?.locked) return
+    setBusy(true)
+    try {
+      const file = await unlockPdf(current.name, current.locked.data, password)
+      setPassword('')
+      setQueue((q) => [file, ...q.slice(1)])
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const skipFile = (): void => {
+    setPreview(null)
+    setPassword('')
+    setQueue((q) => q.slice(1))
+  }
+
+  const rows = preview ? preview.transactions.map((t, i) => ({ ...t, ...edits[i] })) : []
+  const includedCount = rows.length - excluded.size
 
   const targetType: AccountType | undefined = target === 'new' ? newType : accounts.find((a) => a.id === target)?.type
   const suggestInvert = preview && targetType && isLiability(targetType) && preview.positiveShare > 0.6 && !invert
@@ -90,7 +225,9 @@ export function Import({ navigate, onChange, version }: PageProps) {
         text: current.text,
         options: { mapping, dateFormat, invertAmounts: invert },
         accountId: target === 'new' ? undefined : target,
-        newAccount: target === 'new' ? { name: newName, institution: newInstitution, type: newType } : undefined
+        newAccount: target === 'new' ? { name: newName, institution: newInstitution, type: newType } : undefined,
+        excluded: [...excluded],
+        edits
       })
       const account = target === 'new' ? newName : (accounts.find((a) => a.id === target)?.name ?? '')
       setResults((r) => [...r, { file: current.name, result, account }])
@@ -127,6 +264,31 @@ export function Import({ navigate, onChange, version }: PageProps) {
         </div>
       ))}
 
+      {!current && <ErrorBanner error={error} />}
+
+      {current?.locked && (
+        <Card title={current.name}>
+          <ErrorBanner error={error} />
+          <p>This PDF is password-protected. Enter the password you use to open it (often set by your bank, e.g. part of your account number or date of birth).</p>
+          {current.locked.wrongPassword && <div className="banner warn">That password didn&apos;t work. Try again.</div>}
+          <form
+            className="row"
+            onSubmit={(e) => {
+              e.preventDefault()
+              void unlock()
+            }}
+          >
+            <input type="password" autoFocus value={password} onChange={(e) => setPassword(e.target.value)} placeholder="PDF password" aria-label="PDF password" />
+            <button className="primary" type="submit" disabled={busy || !password}>
+              Unlock
+            </button>
+            <button type="button" onClick={skipFile}>
+              Skip file
+            </button>
+          </form>
+        </Card>
+      )}
+
       {!current && (
         <Card>
           <div
@@ -144,8 +306,8 @@ export function Import({ navigate, onChange, version }: PageProps) {
             }}
           >
             <h2>Drop statement files here</h2>
-            <p className="muted">or click to choose · CSV, OFX, QFX or QBO · several at once is fine</p>
-            <input ref={input} type="file" multiple accept=".csv,.txt,.ofx,.qfx,.qbo" hidden onChange={(e) => void addFiles(e.target.files)} />
+            <p className="muted">or click to choose · PDF, CSV, OFX, QFX or QBO · several at once is fine</p>
+            <input ref={input} type="file" multiple accept=".pdf,.csv,.txt,.ofx,.qfx,.qbo" hidden onChange={(e) => void addFiles(e.target.files)} />
           </div>
           <h3 style={{ marginTop: 20 }}>Where to get these files</h3>
           <ul className="muted" style={{ lineHeight: 1.7 }}>
@@ -155,13 +317,16 @@ export function Import({ navigate, onChange, version }: PageProps) {
             <li>
               Choose <strong>Quicken (QFX)</strong>, <strong>OFX</strong> or <strong>CSV</strong>. QFX/OFX is best: it includes the account number and balance, so repeat imports go to the right account automatically.
             </li>
+            <li>
+              Monthly <strong>PDF statements</strong> work too, for example older months that are no longer downloadable as CSV. Check the preview: you can untick or fix any row that was read wrong. Scanned (photographed) PDFs have no text and can&apos;t be read.
+            </li>
             <li>Import as often as you like. Transactions you already imported are skipped.</li>
             <li>For investments, property or loans without downloads, add the account and update its balance from the Accounts page.</li>
           </ul>
         </Card>
       )}
 
-      {current && preview && (
+      {current && !current.locked && preview && (
         <>
           <Card title={`${current.name}${queue.length > 1 ? ` (${queue.length - 1} more queued)` : ''}`} action={<span className="chip">{preview.format.toUpperCase()}</span>}>
             <ErrorBanner error={error} />
@@ -213,6 +378,20 @@ export function Import({ navigate, onChange, version }: PageProps) {
                 </div>
               )}
 
+              {preview.format === 'pdf' && (
+                <>
+                  <div className="banner info">Transactions were read from the PDF&apos;s text. Check them below: untick rows that aren&apos;t transactions and click Edit to fix any that were read wrong.</div>
+                  <div className="mapping">
+                    <label>
+                      Date order
+                      <select value={dateFormat} onChange={(e) => setDateFormat(e.target.value as DateFormat)}>
+                        <option value="MDY">MM/DD</option>
+                        <option value="DMY">DD/MM</option>
+                      </select>
+                    </label>
+                  </div>
+                </>
+              )}
               {preview.format === 'csv' && preview.headers && (
                 <>
                   <h3>Columns</h3>
@@ -261,7 +440,7 @@ export function Import({ navigate, onChange, version }: PageProps) {
           </Card>
 
           <Card
-            title={`Preview · ${preview.transactions.length} transactions`}
+            title={`Preview · ${includedCount} of ${rows.length} transactions selected`}
             action={
               preview.ledgerBalance && (
                 <span className="muted small">
@@ -270,38 +449,53 @@ export function Import({ navigate, onChange, version }: PageProps) {
               )
             }
           >
-            <table>
-              <thead>
-                <tr>
-                  <th>Date</th>
-                  <th>Description</th>
-                  <th className="num">Amount</th>
-                </tr>
-              </thead>
-              <tbody>
-                {preview.transactions.slice(0, 12).map((t, i) => (
-                  <tr key={i}>
-                    <td className="muted">{shortDate(t.date)}</td>
-                    <td>{t.description}</td>
-                    <td className="num">
-                      <Money cents={t.amount} colored />
-                    </td>
+            <div className="preview-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th style={{ width: 28 }}>
+                      <input
+                        type="checkbox"
+                        aria-label="Include all"
+                        checked={excluded.size === 0}
+                        onChange={() => setExcluded(excluded.size === 0 ? new Set(rows.map((_, i) => i)) : new Set())}
+                      />
+                    </th>
+                    <th>Date</th>
+                    <th>Description</th>
+                    <th className="num">Amount</th>
+                    <th style={{ width: 60 }} />
                   </tr>
-                ))}
-              </tbody>
-            </table>
-            {preview.transactions.length > 12 && <div className="muted small" style={{ marginTop: 8 }}>…and {preview.transactions.length - 12} more</div>}
+                </thead>
+                <tbody>
+                  {rows.map((t, i) => (
+                    <PreviewRow
+                      key={`${current.name}-${i}-${t.date}-${t.amount}`}
+                      txn={t}
+                      included={!excluded.has(i)}
+                      onToggle={() =>
+                        setExcluded((prev) => {
+                          const next = new Set(prev)
+                          if (next.has(i)) next.delete(i)
+                          else next.add(i)
+                          return next
+                        })
+                      }
+                      onEdit={(patch) => setEdits((prev) => ({ ...prev, [i]: { ...prev[i], ...patch } }))}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {preview.skippedRows > 0 && preview.format === 'pdf' && (
+              <div className="muted small" style={{ marginTop: 8 }}>
+                {preview.skippedRows} dated line{preview.skippedRows === 1 ? '' : 's'} didn&apos;t look like transactions and were left out.
+              </div>
+            )}
             <div className="form-actions" style={{ marginTop: 16 }}>
-              <button
-                onClick={() => {
-                  setPreview(null)
-                  setQueue((q) => q.slice(1))
-                }}
-              >
-                Skip file
-              </button>
-              <button className="primary" disabled={busy || (preview.transactions.length === 0 && !preview.ledgerBalance) || (target === 'new' && !newName.trim())} onClick={() => void commit()}>
-                {busy ? 'Importing…' : `Import ${preview.transactions.length} transactions`}
+              <button onClick={skipFile}>Skip file</button>
+              <button className="primary" disabled={busy || (includedCount === 0 && !preview.ledgerBalance) || (target === 'new' && !newName.trim())} onClick={() => void commit()}>
+                {busy ? 'Importing…' : `Import ${includedCount} transaction${includedCount === 1 ? '' : 's'}`}
               </button>
             </div>
           </Card>

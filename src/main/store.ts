@@ -12,10 +12,11 @@ import {
 } from '../core/analytics'
 import { categorize, compileRule, DEFAULT_CATEGORIES, DEFAULT_RULES, findTransferPairs, normalizePayee, type CompiledRule } from '../core/categorize'
 import { parseCsv } from '../core/csv'
-import { addDays, addMonths, monthOf, todayIso } from '../core/dates'
+import { addDays, addMonths, monthOf, parseDate, todayIso } from '../core/dates'
 import { fingerprintAll } from '../core/dedupe'
 import { generateDemoData } from '../core/demo'
 import { looksLikeOfx, parseOfx } from '../core/ofx'
+import { parsePdfStatement } from '../core/pdf'
 import type {
   Account,
   AccountWithBalance,
@@ -103,6 +104,7 @@ const USER_RULE_PRIORITY = 100
 const TXN_COLUMNS = `t.id, t.account_id AS accountId, t.date, t.amount, t.description, t.payee, t.category_id AS categoryId, t.notes`
 
 export function parseStatement(filename: string, text: string, options: ImportOptions = {}): ParsedStatement {
+  if (/\.pdf$/i.test(filename)) return parsePdfStatement(text, options)
   if (/\.(ofx|qfx|qbo)$/i.test(filename) || looksLikeOfx(text)) return parseOfx(text)
   return parseCsv(text, options)
 }
@@ -488,7 +490,18 @@ export class FinanceStore {
 
   commitImport(req: ImportRequest): ImportResult {
     const parsed = parseStatement(req.filename, req.text, req.options)
-    if (parsed.transactions.length === 0 && !parsed.ledgerBalance) throw new Error(parsed.errors[0] ?? 'No transactions found')
+    // Fingerprints come from the rows as parsed, so corrections made in the preview don't defeat dedupe on re-import.
+    const excluded = new Set(req.excluded ?? [])
+    const rows = parsed.transactions.flatMap((t, index) => {
+      if (excluded.has(index)) return []
+      const edit = req.edits?.[index]
+      if (!edit) return [{ t, index }]
+      const fixed = { ...t, ...edit }
+      const date = parseDate(fixed.date)
+      if (!date || !Number.isInteger(fixed.amount) || !fixed.description.trim()) throw new Error(`Row ${index + 1} has an invalid date, amount or description`)
+      return [{ t: { ...fixed, date, description: fixed.description.trim() }, index }]
+    })
+    if (rows.length === 0 && !parsed.ledgerBalance) throw new Error(parsed.errors[0] ?? 'No transactions found')
     const result = this.tx(() => {
       let accountId = req.accountId
       if (accountId == null) {
@@ -508,20 +521,20 @@ export class FinanceStore {
       const now = new Date().toISOString()
       let added = 0
       let categorized = 0
-      parsed.transactions.forEach((t, i) => {
+      rows.forEach(({ t, index }) => {
         const payee = normalizePayee(t.description)
         const categoryId = categorize(rules, t.description, payee)
         const { changes } = this.run(
           `INSERT OR IGNORE INTO transactions (account_id, date, amount, description, payee, category_id, fingerprint, import_id, created_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [accountId, t.date, t.amount, t.description, payee, categoryId, fps[i], importId, now]
+          [accountId, t.date, t.amount, t.description, payee, categoryId, fps[index], importId, now]
         )
         if (changes) {
           added++
           if (categoryId !== null) categorized++
         }
       })
-      const duplicates = parsed.transactions.length - added
+      const duplicates = rows.length - added
       this.run('UPDATE imports SET added = ?, duplicates = ? WHERE id = ?', [added, duplicates, importId])
       if (parsed.ledgerBalance) this.setBalance(accountId, parsed.ledgerBalance.date, parsed.ledgerBalance.balance)
       const transfersMatched = this.matchTransfers()

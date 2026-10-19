@@ -3,6 +3,7 @@ import { writeFileSync } from 'fs'
 import { join } from 'path'
 import type { FinanceApi } from '../shared/types'
 import { openDatabase } from './db'
+import { extractPdfText } from './pdf'
 import { FinanceStore } from './store'
 
 const dataPath = process.env.FINANCE_HUB_DATA ?? join(app.getPath('userData'), 'finance-hub.db')
@@ -70,6 +71,7 @@ async function main(): Promise<void> {
     listBudgets: async () => store.listBudgets(),
     setBudget: async (categoryId, amount) => store.setBudget(categoryId, amount),
     getBudgetOverview: async (month) => store.getBudgetOverview(month),
+    extractPdfText: async (data, password) => extractPdfText(data, password),
     previewImport: async (filename, text, options) => store.previewImport(filename, text, options),
     commitImport: async (request) => store.commitImport(request),
     loadDemoData: async () => store.loadDemoData(),
