@@ -59,6 +59,20 @@ describe('UK statements', () => {
     ])
   })
 
+  it('Amex UK: purchases after a "Payments and Credits" heading stay charges when credits are marked CR', () => {
+    const text = [
+      'American Express',
+      'Statement Date 14 October 2026',
+      'Payments and Credits',
+      'Sep 18 AUTOMATIC PAYMENT RECEIVED - THANK YOU 1,000.00 CR',
+      'Card Member J SMITH',
+      'Sep 16 TESCO STORES 2345 LONDON 45.67',
+      'Sep 20 PRET A MANGER LONDON 4.50',
+      'Sep 22 JOHN LEWIS REFUND 30.00 CR'
+    ].join('\n')
+    expect(parsePdfStatement(text).transactions.map((t) => t.amount)).toEqual([100000, -4567, -450, 3000])
+  })
+
   it('Yonder: day-first numeric dates on a British statement, £ signs', () => {
     const text = [
       'Yonder',
