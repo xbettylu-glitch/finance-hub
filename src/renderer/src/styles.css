@@ -139,3 +139,6 @@ code { background: #f1f5f9; padding: 1px 6px; border-radius: 6px; font-size: 12p
 .preview-scroll { max-height: 460px; overflow: auto; }
 .preview-scroll thead th { position: sticky; top: 0; background: white; z-index: 1; }
 tr.excluded td:not(:first-child) { opacity: 0.45; text-decoration: line-through; }
+.extracted-text { margin-bottom: 16px; }
+.extracted-text summary { cursor: pointer; font-weight: 600; margin-bottom: 8px; }
+.extracted-text textarea { width: 100%; font-family: ui-monospace, Menlo, monospace; font-size: 12px; margin-bottom: 8px; }

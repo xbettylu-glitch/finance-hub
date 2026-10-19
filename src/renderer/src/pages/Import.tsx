@@ -16,6 +16,28 @@ type RowEdits = NonNullable<ImportRequest['edits']>
 
 const isPdf = (name: string): boolean => /\.pdf$/i.test(name)
 
+/** Shows the text read from a PDF so an unrecognised layout can be diagnosed. */
+function ExtractedText({ text }: { text: string }): JSX.Element {
+  const [copied, setCopied] = useState(false)
+  return (
+    <details className="extracted-text">
+      <summary>Show the text the app read</summary>
+      <p className="muted">
+        These are the lines found in the PDF. Transactions need a date at the start of the line and an amount at the end. To get help with this layout, copy a few
+        transaction lines, replace names and numbers with made-up ones, and share them.
+      </p>
+      <textarea readOnly value={text} rows={14} />
+      <button
+        onClick={() => {
+          void navigator.clipboard.writeText(text).then(() => setCopied(true))
+        }}
+      >
+        {copied ? 'Copied' : 'Copy text'}
+      </button>
+    </details>
+  )
+}
+
 async function loadFile(f: File): Promise<PendingFile> {
   if (!isPdf(f.name)) return { name: f.name, text: await f.text() }
   const data = new Uint8Array(await f.arrayBuffer())
@@ -335,6 +357,7 @@ export function Import({ navigate, onChange, version }: PageProps) {
                 {e}
               </div>
             ))}
+            {preview.format === 'pdf' && preview.transactions.length === 0 && current.text.trim() && <ExtractedText text={current.text} />}
             <div className="form">
               <div className="row">
                 <label>
