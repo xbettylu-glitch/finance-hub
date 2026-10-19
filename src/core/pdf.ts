@@ -1,5 +1,5 @@
 import type { AccountType, DateFormat, ImportOptions, ParsedStatement, ParsedTransaction } from '../shared/types'
-import { parseDate } from './dates'
+import { daysInMonth, parseDate, todayIso } from './dates'
 
 const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
 const MONTH_RE = '(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\\.?'
@@ -150,24 +150,44 @@ function detectDmy(lines: string[], format: DateFormat | undefined, british: boo
 }
 
 /** The statement's closing date, used to give year-less dates (e.g. "01/05") a year. */
-function referenceDate(lines: string[], format: DateFormat): string | null {
-  let best: string | null = null
-  let fallback: string | null = null
+const STATEMENT_DATE =
+  /statement\s+(closing\s+)?date|date\s+of\s+(this\s+)?statement|closing\s+date|opening\/closing\s+date|statement\s+(period|from)|billing\s+(period|cycle)|period\s+(ending|covered)|statement\s+ending/i
+
+/**
+ * The statement's closing date, used to give year-less dates (e.g. "01/05") a year. Prefers the date labelled as the
+ * statement date, then the first date range (e.g. "1 Sep 2025 to 30 Sep 2025"), then the latest date on the statement.
+ * Small print often mentions other years ("changes to your terms from 1 February 2026"), so those only count last.
+ */
+function referenceDate(lines: string[], format: DateFormat, today: string): string | null {
+  let range: string | null = null
+  let latest: string | null = null
   for (const line of lines) {
-    const dates = [...line.matchAll(FULL_DATE)].map((m) => parseDate(m[1], format)).filter((d): d is string => d !== null)
-    if (!dates.length) continue
-    const max = dates.sort().at(-1)!
-    if (/clos|period|through|statement\s+date|ending|\bto\b|\s-\s/i.test(line) && (!best || max > best)) best = max
-    if (!fallback || max > fallback) fallback = max
+    const found = [...line.matchAll(FULL_DATE)].flatMap((m) => {
+      const iso = parseDate(m[1], format)
+      return iso ? [{ iso, index: m.index! }] : []
+    })
+    if (!found.length) continue
+    const labelled = STATEMENT_DATE.exec(line)
+    if (labelled) {
+      const afterLabel = found.filter((f) => f.index > labelled.index)
+      const pool = afterLabel.length ? afterLabel : found
+      // "Opening/Closing Date 12/15/25 - 01/14/26": the end of the range is the closing date.
+      if (pool.length > 1 && /\bto\b|through|\s[-–]\s/i.test(line)) return pool.map((f) => f.iso).sort().at(-1)!
+      return pool[0].iso
+    }
+    const sorted = found.map((f) => f.iso).sort()
+    if (!range && found.length > 1 && /\bto\b|through|\s[-–]\s/i.test(line)) range = sorted.at(-1)!
+    for (const iso of sorted) if (iso <= today && (!latest || iso > latest)) latest = iso
   }
-  return best ?? fallback
+  return range ?? latest
 }
 
-function resolveDate(date: Candidate['date'], ref: string | null): string | null {
+/** Gives year-less dates the year of the statement date `ref` (or of today, when the statement shows no date at all). */
+function resolveDate(date: Candidate['date'], ref: string): string | null {
   let year = date.y
   if (year === undefined) {
-    const refYear = ref ? +ref.slice(0, 4) : new Date().getFullYear()
-    const refMonth = ref ? +ref.slice(5, 7) : 12
+    const refYear = +ref.slice(0, 4)
+    const refMonth = +ref.slice(5, 7)
     year = date.m > refMonth ? refYear - 1 : refYear
   } else if (year < 100) {
     year += year < 70 ? 2000 : 1900
@@ -202,7 +222,17 @@ function detectAccount(text: string): { externalId?: string; type?: AccountType;
  * from, in order: running-balance changes, explicit signs, the section heading (Deposits / Withdrawals / Payments...),
  * then the default for the account type (money out).
  */
-export function parsePdfStatement(text: string, options: ImportOptions = {}): ParsedStatement {
+/** The year (and month, if present) in a file name like "Statement_Oct_2025.pdf", as the last day of that period. */
+function dateFromFilename(filename: string): string | null {
+  const year = /(?:^|\D)(20\d{2})(?!\d)/.exec(filename)?.[1]
+  if (!year) return null
+  const month = new RegExp(MONTH_RE, 'i').exec(filename.replace(/\d+/g, ' '))
+  const m = month ? MONTHS.indexOf(month[1].slice(0, 3).toLowerCase()) + 1 : 12
+  return `${year}-${String(m).padStart(2, '0')}-${String(daysInMonth(+year, m)).padStart(2, '0')}`
+}
+
+export function parsePdfStatement(text: string, options: ImportOptions = {}, context: { filename?: string; today?: string } = {}): ParsedStatement {
+  const today = context.today ?? todayIso()
   const lines = text
     .split(/\r?\n/)
     .map((l) => l.replace(/\s+/g, ' ').trim())
@@ -219,7 +249,10 @@ export function parsePdfStatement(text: string, options: ImportOptions = {}): Pa
 
   const dmy = detectDmy(lines, options.dateFormat, UK_HINT.test(text))
   const dateFormat: DateFormat = dmy ? 'DMY' : 'MDY'
-  const ref = referenceDate(lines, dateFormat)
+  const found = referenceDate(lines, dateFormat, today)
+  const fromName = context.filename ? dateFromFilename(context.filename) : null
+  // With no date anywhere, year-less dates are assumed to be from the last 12 months.
+  const ref = found ?? (fromName && fromName < today ? fromName : today)
   const account = detectAccount(lines.join('\n'))
   const cardSign = account.isCard ? -1 : 1
   const hasReferenceColumn = /reference\s+(number|no\b|#)/i.test(text)

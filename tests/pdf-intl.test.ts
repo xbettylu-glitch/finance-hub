@@ -225,3 +225,25 @@ describe('Canadian statements', () => {
     ])
   })
 })
+
+describe('statement year', () => {
+  it('uses the labelled statement date, not later years in the small print', () => {
+    const text = [
+      'American Express',
+      'Statement Date 5 October 2025',
+      'Important: changes to your terms from 1 February 2026',
+      'Sep 14 APPLE STORE R329 LONDON 349.00',
+      'Oct 02 ASDA STORES IPSWICH 15.00'
+    ].join('\n')
+    expect(parsePdfStatement(text, {}, { today: '2026-10-19' }).transactions.map((t) => t.date)).toEqual(['2025-09-14', '2025-10-02'])
+  })
+
+  it('uses the end of a date range, then the file name, when there is no statement date', () => {
+    const range = ['Revolut', 'Statement 1 Sep 2025 to 30 Sep 2025', '12 Sep Tesco 12.34'].join('\n')
+    expect(parsePdfStatement(range, {}, { today: '2026-10-19' }).transactions[0].date).toBe('2025-09-12')
+    const bare = ['American Express', 'Sep 14 APPLE STORE 349.00'].join('\n')
+    expect(parsePdfStatement(bare, {}, { filename: 'Statement Oct 2025.pdf', today: '2026-10-19' }).transactions[0].date).toBe('2025-09-14')
+    expect(parsePdfStatement(bare, {}, { today: '2026-10-19' }).transactions[0].date).toBe('2026-09-14')
+    expect(parsePdfStatement(['American Express', 'Dec 14 APPLE STORE 349.00'].join('\n'), {}, { today: '2026-10-19' }).transactions[0].date).toBe('2025-12-14')
+  })
+})

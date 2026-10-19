@@ -106,7 +106,7 @@ const USER_RULE_PRIORITY = 100
 const TXN_COLUMNS = `t.id, t.account_id AS accountId, t.date, t.amount, t.description, t.payee, t.category_id AS categoryId, t.notes`
 
 export function parseStatement(filename: string, text: string, options: ImportOptions = {}): ParsedStatement {
-  if (/\.pdf$/i.test(filename)) return parsePdfStatement(text, options)
+  if (/\.pdf$/i.test(filename)) return parsePdfStatement(text, options, { filename })
   if (/\.(ofx|qfx|qbo)$/i.test(filename) || looksLikeOfx(text)) return parseOfx(text)
   return parseCsv(text, options)
 }
