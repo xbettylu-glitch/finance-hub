@@ -7,6 +7,45 @@ import { makePdf, statementPage } from './helpers/makePdf'
 const rows = (s: ReturnType<typeof parsePdfStatement>): [string, number, string][] => s.transactions.map((t) => [t.date, t.amount, t.description])
 
 describe('UK statements', () => {
+  it('Amex UK statement period without a year on the start date; small print mentions next year', () => {
+    const s = parsePdfStatement(
+      [
+        'American Express',
+        'Statement includes payments and charges received by 5 December 2025',
+        'Statement Period From 6 November to 5 December 2025',
+        'With effect from 6 February 2026, your Personal Rate is changing',
+        'Nov 6 Nov 6 PAYMENT RECEIVED - THANK YOU 3,424.54',
+        'Nov 5 Nov 5 DELIVEROO PARIS 09 8,50 7.71',
+        'Nov 30 Nov 30 WAITROSE - FULHAM LONDON 4.00',
+        'Earn a reward flight by spending £15,000 before your Card anniversary date of 07-11-2026'
+      ].join('\n'),
+      {},
+      { filename: '6_Nov_2025_-_5_Dec_2025.pdf', today: '2026-10-19' }
+    )
+    expect(rows(s).map((r) => [r[0], r[1]])).toEqual([
+      ['2025-11-06', 342454],
+      ['2025-11-05', -771],
+      ['2025-11-30', -400]
+    ])
+  })
+
+  it('year-less dates never land in the future, even when the statement mentions a future statement date', () => {
+    const s = parsePdfStatement(
+      ['American Express', 'Your next statement date is 5 December 2026', 'Balance £15.00', 'Nov 12 TESCO STORES 10.00', 'Dec 03 BOOTS 5.00'].join('\n'),
+      {},
+      { today: '2026-10-19' }
+    )
+    expect(rows(s).map((r) => r[0])).toEqual(['2025-11-12', '2025-12-03'])
+  })
+
+  it('UK day-first dates are not flipped by amounts at the start of a line', () => {
+    const s = parsePdfStatement(
+      ['American Express', 'Statement Date 14/10/2026', 'Balance £434.10', '5.20', '05/10 TESCO STORES 45.67', '06/10 BOOTS 3.20'].join('\n')
+    )
+    expect(s.dateFormat).toBe('DMY')
+    expect(rows(s).map((r) => r[0])).toEqual(['2026-10-05', '2026-10-06'])
+  })
+
   it('Amex UK: £ amounts, CR payments, wrapped descriptions, footnote markers', async () => {
     const page = statementPage([
       [[40, 'American Express']],
@@ -209,7 +248,9 @@ describe('Canadian statements', () => {
 
   it('Rogers and Amex Canada: wrapped merchant names and year rollover', () => {
     const rogers = parsePdfStatement(
-      ['Rogers Bank', 'Rogers World Elite Mastercard', 'Statement date: Jan 14, 2027', 'Credit limit $8,000.00', 'Dec 20 Dec 21 UBER CANADA/UBERTRIP TORONTO ON 23.45', 'Jan 3 Jan 4 PAYMENT, THANK YOU -200.00'].join('\n')
+      ['Rogers Bank', 'Rogers World Elite Mastercard', 'Statement date: Jan 14, 2027', 'Credit limit $8,000.00', 'Dec 20 Dec 21 UBER CANADA/UBERTRIP TORONTO ON 23.45', 'Jan 3 Jan 4 PAYMENT, THANK YOU -200.00'].join('\n'),
+      {},
+      { today: '2027-02-01' }
     )
     expect(rogers.account?.institution).toBe('Rogers Bank')
     expect(rows(rogers)).toEqual([

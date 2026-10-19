@@ -153,6 +153,8 @@ export interface ImportOptions {
   mapping?: ColumnMapping
   dateFormat?: DateFormat
   invertAmounts?: boolean
+  /** Read ambiguous numeric dates such as 05/10 as day first (5 Oct) when nothing in the file proves otherwise. */
+  dayFirst?: boolean
 }
 
 export interface ParsedTransaction {

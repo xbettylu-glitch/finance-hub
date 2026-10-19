@@ -101,6 +101,13 @@ describe('multi-currency store', () => {
     expect(fresh.getCurrencySettings().accountCounts).toEqual({ GBP: 1, CAD: 1 })
   })
 
+  it('reads ambiguous CSV dates day first for a GBP user, month first for a US statement', () => {
+    const csv = 'Date,Description,Amount\n05/10/2026,Tesco,-4.50\n06/10/2026,Boots,-3.20'
+    expect(store.previewImport('a.csv', csv).transactions.map((t) => t.date)).toEqual(['2026-10-05', '2026-10-06'])
+    const us = csv.replace('Amount', 'Amount (USD)')
+    expect(store.previewImport('b.csv', us).transactions.map((t) => t.date)).toEqual(['2026-05-10', '2026-06-10'])
+  })
+
   it('gives a currency to accounts added by an older app version after the upgrade', () => {
     const db = new SQL.Database()
     const first = new FinanceStore(db, () => {}, 'GBP')

@@ -525,8 +525,15 @@ export class FinanceStore {
     return accounts.find((a) => a.externalId && a.externalId.replace(/\D/g, '').slice(-4) === last4)?.id ?? null
   }
 
+  /** Day-first dates unless the statement (or, failing that, the main currency) is US or Canadian. */
+  private importOptions(text: string, options: ImportOptions = {}): ImportOptions {
+    if (options.dayFirst !== undefined) return options
+    const currency = detectCurrency(text) ?? this.homeCurrency()
+    return { ...options, dayFirst: currency !== 'USD' && currency !== 'CAD' }
+  }
+
   previewImport(filename: string, text: string, options: ImportOptions = {}): ImportPreview {
-    const parsed = parseStatement(filename, text, options)
+    const parsed = parseStatement(filename, text, this.importOptions(text, options))
     const positives = parsed.transactions.filter((t) => t.amount > 0).length
     return {
       ...parsed,
@@ -537,7 +544,7 @@ export class FinanceStore {
   }
 
   commitImport(req: ImportRequest): ImportResult {
-    const parsed = parseStatement(req.filename, req.text, req.options)
+    const parsed = parseStatement(req.filename, req.text, this.importOptions(req.text, req.options))
     // Fingerprints come from the rows as parsed, so corrections made in the preview don't defeat dedupe on re-import.
     const excluded = new Set(req.excluded ?? [])
     const rows = parsed.transactions.flatMap((t, index) => {

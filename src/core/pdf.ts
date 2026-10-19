@@ -141,9 +141,10 @@ function detectDmy(lines: string[], format: DateFormat | undefined, british: boo
   if (format === 'MDY' || format === 'YMD') return false
   let dmy = british
   for (const line of lines) {
-    const m = /^(\d{1,2})[/.-](\d{1,2})(?:[/.-]\d{2,4})?(?![\d/.-])/.exec(line)
-    if (!m) continue
-    if (+m[2] > 12) return false
+    const m = /^(\d{1,2})([/.-])(\d{1,2})([/.-]\d{2,4})?(?![\d/.-])/.exec(line)
+    // "12.99" or "5.20" at the start of a line is an amount, not a date.
+    if (!m || (m[2] === '.' && !m[4])) continue
+    if (+m[3] > 12) return false
     if (+m[1] > 12) dmy = true
   }
   return dmy
@@ -168,9 +169,11 @@ function referenceDate(lines: string[], format: DateFormat, today: string): stri
     })
     if (!found.length) continue
     const labelled = STATEMENT_DATE.exec(line)
-    if (labelled) {
-      const afterLabel = found.filter((f) => f.index > labelled.index)
-      const pool = afterLabel.length ? afterLabel : found
+    // A statement date after today is a notice about a future statement ("your next statement date is …").
+    const past = found.filter((f) => f.iso <= today)
+    if (labelled && past.length) {
+      const afterLabel = past.filter((f) => f.index > labelled.index)
+      const pool = afterLabel.length ? afterLabel : past
       // "Opening/Closing Date 12/15/25 - 01/14/26": the end of the range is the closing date.
       if (pool.length > 1 && /\bto\b|through|\s[-–]\s/i.test(line)) return pool.map((f) => f.iso).sort().at(-1)!
       return pool[0].iso
@@ -182,13 +185,17 @@ function referenceDate(lines: string[], format: DateFormat, today: string): stri
   return range ?? latest
 }
 
-/** Gives year-less dates the year of the statement date `ref` (or of today, when the statement shows no date at all). */
-function resolveDate(date: Candidate['date'], ref: string): string | null {
+/**
+ * Gives year-less dates the year of the statement date `ref` (or of today, when the statement shows no date at all).
+ * Never in the future: a statement can't list transactions that haven't happened yet.
+ */
+function resolveDate(date: Candidate['date'], ref: string, today: string): string | null {
   let year = date.y
   if (year === undefined) {
     const refYear = +ref.slice(0, 4)
     const refMonth = +ref.slice(5, 7)
     year = date.m > refMonth ? refYear - 1 : refYear
+    if (`${year}-${String(date.m).padStart(2, '0')}-${String(date.d).padStart(2, '0')}` > today) year--
   } else if (year < 100) {
     year += year < 70 ? 2000 : 1900
   }
@@ -247,7 +254,7 @@ export function parsePdfStatement(text: string, options: ImportOptions = {}, con
     }
   }
 
-  const dmy = detectDmy(lines, options.dateFormat, UK_HINT.test(text))
+  const dmy = detectDmy(lines, options.dateFormat, UK_HINT.test(text) || options.dayFirst === true)
   const dateFormat: DateFormat = dmy ? 'DMY' : 'MDY'
   const found = referenceDate(lines, dateFormat, today)
   const fromName = context.filename ? dateFromFilename(context.filename) : null
@@ -405,7 +412,7 @@ export function parsePdfStatement(text: string, options: ImportOptions = {}, con
   let skippedRows = counts.skippedRows
 
   const transactions: ParsedTransaction[] = []
-  const dates = candidates.map((c) => resolveDate(c.date, ref))
+  const dates = candidates.map((c) => resolveDate(c.date, ref, today))
   const known = dates.filter((d): d is string => d !== null)
   // Revolut and Wise list the newest transaction first, so the balance before a row is on the row below it.
   const newestFirst = known.length > 1 && known[0] > known.at(-1)!
