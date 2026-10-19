@@ -8,9 +8,10 @@ import { Categories } from './pages/Categories'
 import { Dashboard } from './pages/Dashboard'
 import { Import } from './pages/Import'
 import { Settings } from './pages/Settings'
+import { Spending } from './pages/Spending'
 import { Transactions } from './pages/Transactions'
 
-export type PageName = 'dashboard' | 'accounts' | 'transactions' | 'import' | 'budgets' | 'categories' | 'settings'
+export type PageName = 'dashboard' | 'spending' | 'accounts' | 'transactions' | 'import' | 'budgets' | 'categories' | 'settings'
 export interface Nav {
   page: PageName
   query?: TxnQuery
@@ -19,6 +20,7 @@ export type Navigate = (nav: Nav) => void
 
 const PAGES: { page: PageName; label: string }[] = [
   { page: 'dashboard', label: 'Overview' },
+  { page: 'spending', label: 'Spending' },
   { page: 'accounts', label: 'Accounts' },
   { page: 'transactions', label: 'Transactions' },
   { page: 'budgets', label: 'Budgets' },
@@ -64,6 +66,7 @@ export function App() {
       </nav>
       <main className="main">
         {nav.page === 'dashboard' && <Dashboard {...props} />}
+        {nav.page === 'spending' && <Spending {...props} />}
         {nav.page === 'accounts' && <Accounts {...props} />}
         {nav.page === 'transactions' && <Transactions key={JSON.stringify(nav.query ?? {})} initialQuery={nav.query} {...props} />}
         {nav.page === 'budgets' && <Budgets {...props} />}

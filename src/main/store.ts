@@ -8,6 +8,8 @@ import {
   netWorthAt,
   netWorthSeries,
   spendingByCategory,
+  spendingInsights,
+  spendingReport,
   topMerchants
 } from '../core/analytics'
 import { categorize, compileRule, DEFAULT_CATEGORIES, DEFAULT_RULES, findTransferPairs, normalizePayee, type CompiledRule } from '../core/categorize'
@@ -37,7 +39,11 @@ import type {
   Transaction,
   TransactionRow,
   TxnQuery,
-  CurrencySettings
+  CurrencySettings,
+  Insight,
+  RecurringItem,
+  SpendingQuery,
+  SpendingReport
 } from '../shared/types'
 
 const SCHEMA = `
@@ -620,6 +626,7 @@ export class FinanceStore {
 
     return {
       asOf,
+      insights: this.insightsFor(txns, categories, asOf, fx.home).slice(0, 3),
       homeCurrency: fx.home,
       missingRates: [...fx.missing].sort(),
       month: selected,
@@ -642,6 +649,45 @@ export class FinanceStore {
       recurring: detectRecurring(txns, categories, asOf),
       uncategorizedCount: Number(this.get<{ n: number }>('SELECT COUNT(*) AS n FROM transactions WHERE category_id IS NULL')?.n ?? 0),
       recentTransactions: this.listTransactions({ limit: 8 }).rows
+    }
+  }
+
+  // ---------- spending ----------
+
+  private insightsFor(txns: Transaction[], categories: Category[], asOf: string, currency: string, recurring?: RecurringItem[]): Insight[] {
+    const month = monthOf(asOf)
+    return spendingInsights({
+      txns,
+      categories,
+      recurring: recurring ?? detectRecurring(txns, categories, asOf),
+      budgets: budgetProgress(this.listBudgets(), spendingByCategory(txns, categories, month), categories),
+      lastMonthFlow: cashFlow(txns, categories, addMonths(month, -1), 1)[0],
+      asOf,
+      currency
+    })
+  }
+
+  getSpendingReport(q: SpendingQuery = {}, asOf = todayIso()): SpendingReport {
+    const accounts = this.rawAccounts(false)
+    const ids = new Set(accounts.filter((a) => q.accountId == null || a.id === q.accountId).map((a) => a.id))
+    const fx = this.converter()
+    const txns = this.homeTransactions(
+      accounts,
+      this.allTransactions().filter((t) => ids.has(t.accountId)),
+      fx
+    )
+    const categories = this.listCategories()
+    const months = new Set(txns.map((t) => monthOf(t.date)))
+    months.add(monthOf(asOf))
+    const availableMonths = [...months].filter((m) => m <= monthOf(asOf)).sort().reverse()
+    const endMonth = q.endMonth && availableMonths.includes(q.endMonth) ? q.endMonth : availableMonths[0]
+    const recurring = detectRecurring(txns, categories, asOf)
+    const count = Math.min(Math.max(Math.round(q.months ?? 12), 1), 60)
+    return {
+      homeCurrency: fx.home,
+      availableMonths,
+      ...spendingReport(txns, categories, endMonth, count, new Set(recurring.map((r) => r.payee)), q.categoryId),
+      insights: this.insightsFor(txns, categories, asOf, fx.home, recurring)
     }
   }
 
