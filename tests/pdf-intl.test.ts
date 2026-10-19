@@ -167,6 +167,25 @@ describe('UK statements', () => {
     ])
   })
 
+  it('Yonder: payments from the summary box become a payment row, and the bill total is the balance', () => {
+    const s = parsePdfStatement(
+      ['Yonder', 'Statement Period: 01 Mar 2026 - 31 Mar 2026', 'Credit limit: £10,000.00', 'Summary',
+        'Total Bill for February 2026 £3,578.89', 'Payments made towards last bill +£3,809.49', 'Spent between 01 Mar - 31 Mar £66.20',
+        'Early payments and refunds between 01 Mar - 31 Mar +£9.50', 'Total Bill for March 2026 £56.70',
+        'Date Description Amount (£)', '01/03/2026 Yonder Membership £15', '02/03/2026 Motiv Sports £51.20', '14/03/2026 Breeze +£9.50'
+      ].join('\n'),
+      {},
+      { today: '2026-10-19' }
+    )
+    expect(rows(s)).toEqual([
+      ['2026-03-01', -1500, 'Yonder Membership'],
+      ['2026-03-02', -5120, 'Motiv Sports'],
+      ['2026-03-14', 950, 'Breeze'],
+      ['2026-03-01', 380949, 'Payment received (from statement summary)']
+    ])
+    expect(s.ledgerBalance).toEqual({ date: '2026-03-31', balance: -5670 })
+  })
+
   it('Yonder: day-first numeric dates on a British statement, £ signs', () => {
     const text = [
       'Yonder',
