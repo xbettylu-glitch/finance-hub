@@ -13,5 +13,5 @@
     "composite": true,
     "noEmit": true
   },
-  "include": ["src/renderer/**/*", "src/shared/**/*", "src/core/dates.ts", "src/core/money.ts"]
+  "include": ["src/renderer/**/*", "src/shared/**/*", "src/core/dates.ts", "src/core/money.ts", "src/core/currency.ts"]
 }

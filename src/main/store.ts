@@ -11,6 +11,7 @@ import {
   topMerchants
 } from '../core/analytics'
 import { categorize, compileRule, DEFAULT_CATEGORIES, DEFAULT_RULES, findTransferPairs, normalizePayee, type CompiledRule } from '../core/categorize'
+import { crossRate, detectCurrency, isCurrency } from '../core/currency'
 import { parseCsv } from '../core/csv'
 import { addDays, addMonths, monthOf, parseDate, todayIso } from '../core/dates'
 import { fingerprintAll } from '../core/dedupe'
@@ -35,7 +36,8 @@ import type {
   Rule,
   Transaction,
   TransactionRow,
-  TxnQuery
+  TxnQuery,
+  CurrencySettings
 } from '../shared/types'
 
 const SCHEMA = `
@@ -114,7 +116,9 @@ export class FinanceStore {
 
   constructor(
     private db: Database,
-    private onChange: () => void = () => {}
+    private onChange: () => void = () => {},
+    /** Home currency for a new database, usually from the computer's region. */
+    private defaultHomeCurrency = 'USD'
   ) {
     this.db.run('PRAGMA foreign_keys = ON')
     this.migrate()
@@ -171,6 +175,28 @@ export class FinanceStore {
         this.db.run('PRAGMA user_version = 1')
       })
     }
+    if (version < 2) {
+      this.tx(() => {
+        this.db.exec(`
+          ALTER TABLE accounts ADD COLUMN currency TEXT NOT NULL DEFAULT '';
+          CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+          CREATE TABLE fx_rates (currency TEXT PRIMARY KEY, per_eur REAL NOT NULL);
+          CREATE TABLE fx_manual (currency TEXT PRIMARY KEY, home_per_unit REAL NOT NULL);
+        `)
+        const home = isCurrency(this.defaultHomeCurrency) ? this.defaultHomeCurrency : 'USD'
+        this.setSetting('home_currency', home)
+        this.run("UPDATE accounts SET currency = ? WHERE currency = ''", [home])
+        this.db.run('PRAGMA user_version = 2')
+      })
+    }
+  }
+
+  private getSetting(key: string): string | null {
+    return this.get<{ value: string }>('SELECT value FROM settings WHERE key = ?', [key])?.value ?? null
+  }
+
+  private setSetting(key: string, value: string): void {
+    this.run('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value', [key, value])
   }
 
   private seedDefaults(): void {
@@ -183,7 +209,7 @@ export class FinanceStore {
 
   private rawAccounts(includeArchived = true): Account[] {
     return this.all<Omit<Account, 'archived'> & { archived: number }>(
-      `SELECT id, name, institution, type, external_id AS externalId, archived, created_at AS createdAt FROM accounts
+      `SELECT id, name, institution, type, currency, external_id AS externalId, archived, created_at AS createdAt FROM accounts
        ${includeArchived ? '' : 'WHERE archived = 0'} ORDER BY name`
     ).map((a) => ({ ...a, archived: Boolean(a.archived) }))
   }
@@ -207,12 +233,15 @@ export class FinanceStore {
     const lastSnap = new Map(
       this.all<{ accountId: number; last: string }>('SELECT account_id AS accountId, MAX(date) AS last FROM balances GROUP BY account_id').map((s) => [s.accountId, s.last])
     )
+    const { toHome } = this.converter()
     return accounts.map((a) => {
       const s = stats.get(a.id)
       const dates = [s?.last, lastSnap.get(a.id)].filter(Boolean) as string[]
+      const balance = calcs.get(a.id)!.balanceAt(asOf)
       return {
         ...a,
-        balance: calcs.get(a.id)!.balanceAt(asOf),
+        balance,
+        balanceHome: toHome(balance, a.currency),
         lastActivity: dates.length ? dates.sort()[dates.length - 1] : null,
         transactionCount: s?.n ?? 0
       }
@@ -222,10 +251,12 @@ export class FinanceStore {
   createAccount(input: NewAccount): Account {
     const name = input.name.trim()
     if (!name) throw new Error('Account name is required')
-    const { lastId } = this.run('INSERT INTO accounts (name, institution, type, external_id, created_at) VALUES (?, ?, ?, ?, ?)', [
+    if (input.currency && !isCurrency(input.currency)) throw new Error(`Unsupported currency ${input.currency}`)
+    const { lastId } = this.run('INSERT INTO accounts (name, institution, type, currency, external_id, created_at) VALUES (?, ?, ?, ?, ?, ?)', [
       name,
       input.institution?.trim() ?? '',
       input.type,
+      input.currency || this.homeCurrency(),
       input.externalId ?? null,
       new Date().toISOString()
     ])
@@ -234,12 +265,16 @@ export class FinanceStore {
     return this.rawAccounts().find((a) => a.id === lastId)!
   }
 
-  updateAccount(id: number, patch: Partial<Pick<Account, 'name' | 'institution' | 'type' | 'archived'>>): void {
+  updateAccount(id: number, patch: Partial<Pick<Account, 'name' | 'institution' | 'type' | 'currency' | 'archived'>>): void {
     const sets: string[] = []
     const params: SqlValue[] = []
     if (patch.name !== undefined) sets.push('name = ?') && params.push(patch.name.trim())
     if (patch.institution !== undefined) sets.push('institution = ?') && params.push(patch.institution.trim())
     if (patch.type !== undefined) sets.push('type = ?') && params.push(patch.type)
+    if (patch.currency !== undefined) {
+      if (!isCurrency(patch.currency)) throw new Error(`Unsupported currency ${patch.currency}`)
+      sets.push('currency = ?') && params.push(patch.currency)
+    }
     if (patch.archived !== undefined) sets.push('archived = ?') && params.push(patch.archived ? 1 : 0)
     if (!sets.length) return
     this.run(`UPDATE accounts SET ${sets.join(', ')} WHERE id = ?`, [...params, id])
@@ -286,7 +321,7 @@ export class FinanceStore {
     const clause = where.length ? `WHERE ${where.join(' AND ')}` : ''
     const total = Number(this.get<{ n: number }>(`SELECT COUNT(*) AS n FROM transactions t ${clause}`, params)?.n ?? 0)
     const rows = this.all<TransactionRow>(
-      `SELECT ${TXN_COLUMNS}, a.name AS accountName, c.name AS categoryName, c.color AS categoryColor
+      `SELECT ${TXN_COLUMNS}, a.name AS accountName, a.currency, c.name AS categoryName, c.color AS categoryColor
        FROM transactions t JOIN accounts a ON a.id = t.account_id LEFT JOIN categories c ON c.id = t.category_id
        ${clause} ORDER BY t.date DESC, t.id DESC LIMIT ? OFFSET ?`,
       [...params, q.limit ?? 100, q.offset ?? 0]
@@ -328,9 +363,9 @@ export class FinanceStore {
   transactionsCsv(): string {
     const rows = this.listTransactions({ limit: 1_000_000 }).rows
     const esc = (v: string): string => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v)
-    const lines = ['Date,Account,Description,Payee,Category,Amount,Notes']
+    const lines = ['Date,Account,Description,Payee,Category,Amount,Currency,Notes']
     for (const r of rows)
-      lines.push([r.date, r.accountName, r.description, r.payee, r.categoryName ?? '', (r.amount / 100).toFixed(2), r.notes].map(esc).join(','))
+      lines.push([r.date, r.accountName, r.description, r.payee, r.categoryName ?? '', (r.amount / 100).toFixed(2), r.currency, r.notes].map(esc).join(','))
     return lines.join('\n') + '\n'
   }
 
@@ -426,11 +461,14 @@ export class FinanceStore {
   private matchTransfers(): number {
     const transferId = this.get<{ id: number }>("SELECT id FROM categories WHERE name = 'Transfer' AND kind = 'transfer'")?.id
     if (transferId === undefined) return 0
-    const pairs = findTransferPairs(
-      this.all<{ id: number; accountId: number; date: string; amount: number }>(
-        'SELECT id, account_id AS accountId, date, amount FROM transactions WHERE category_id IS NULL AND category_locked = 0'
-      )
-    )
+    const byCurrency = new Map<string, { id: number; accountId: number; date: string; amount: number }[]>()
+    for (const t of this.all<{ id: number; accountId: number; date: string; amount: number; currency: string }>(
+      `SELECT t.id, t.account_id AS accountId, t.date, t.amount, a.currency FROM transactions t JOIN accounts a ON a.id = t.account_id
+       WHERE t.category_id IS NULL AND t.category_locked = 0`
+    ))
+      byCurrency.set(t.currency, [...(byCurrency.get(t.currency) ?? []), t])
+    // Only same-currency movements can be matched by amount.
+    const pairs = [...byCurrency.values()].flatMap((list) => findTransferPairs(list))
     for (const [a, b] of pairs) this.run('UPDATE transactions SET category_id = ? WHERE id IN (?, ?)', [transferId, a, b])
     return pairs.length * 2
   }
@@ -448,7 +486,7 @@ export class FinanceStore {
 
   /** Spending per expense category for `month`, plus the average of the 3 months before it. */
   getBudgetOverview(month = monthOf(todayIso())): { month: string; rows: BudgetOverviewRow[] } {
-    const txns = this.allTransactions()
+    const txns = this.homeTransactions(this.rawAccounts(), this.allTransactions())
     const categories = this.listCategories()
     const budgets = new Map(this.listBudgets().map((b) => [b.categoryId, b.amount]))
     const sum = (m: string): Map<number | null, number> => new Map(spendingByCategory(txns, categories, m).map((s) => [s.categoryId, s.amount]))
@@ -484,6 +522,7 @@ export class FinanceStore {
     return {
       ...parsed,
       matchedAccountId: this.matchAccount(parsed.account?.externalId),
+      currency: detectCurrency(text),
       positiveShare: parsed.transactions.length ? positives / parsed.transactions.length : 0
     }
   }
@@ -549,8 +588,16 @@ export class FinanceStore {
   getDashboard(month?: string, asOf = todayIso()): DashboardData {
     const accounts = this.rawAccounts(false)
     const accountIds = new Set(accounts.map((a) => a.id))
-    const txns = this.allTransactions().filter((t) => accountIds.has(t.accountId))
-    const snapshots = this.allSnapshots().filter((s) => accountIds.has(s.accountId))
+    const fx = this.converter()
+    const currencyOf = new Map(accounts.map((a) => [a.id, a.currency]))
+    const txns = this.homeTransactions(
+      accounts,
+      this.allTransactions().filter((t) => accountIds.has(t.accountId)),
+      fx
+    )
+    const snapshots = this.allSnapshots()
+      .filter((s) => accountIds.has(s.accountId))
+      .map((s) => ({ ...s, balance: fx.toHome(s.balance, currencyOf.get(s.accountId)!) }))
     const categories = this.listCategories()
     const calcs = buildCalculators(accounts, txns, snapshots)
 
@@ -573,6 +620,8 @@ export class FinanceStore {
 
     return {
       asOf,
+      homeCurrency: fx.home,
+      missingRates: [...fx.missing].sort(),
       month: selected,
       availableMonths,
       accounts: accountsWithBalance,
@@ -594,6 +643,98 @@ export class FinanceStore {
       uncategorizedCount: Number(this.get<{ n: number }>('SELECT COUNT(*) AS n FROM transactions WHERE category_id IS NULL')?.n ?? 0),
       recentTransactions: this.listTransactions({ limit: 8 }).rows
     }
+  }
+
+  // ---------- currencies ----------
+
+  homeCurrency(): string {
+    return this.getSetting('home_currency') ?? 'USD'
+  }
+
+  /** Converts amounts to the home currency: a manual rate wins, then European Central Bank rates. */
+  private converter(): { home: string; missing: Set<string>; rate: (currency: string) => number | null; toHome: (cents: number, currency: string) => number } {
+    const home = this.homeCurrency()
+    const perEur = Object.fromEntries(this.all<{ currency: string; perEur: number }>('SELECT currency, per_eur AS perEur FROM fx_rates').map((r) => [r.currency, r.perEur]))
+    const manual = new Map(this.all<{ currency: string; rate: number }>('SELECT currency, home_per_unit AS rate FROM fx_manual').map((r) => [r.currency, r.rate]))
+    const missing = new Set<string>()
+    const rate = (currency: string): number | null => (currency === home ? 1 : (manual.get(currency) ?? crossRate(perEur, currency, home)))
+    const toHome = (cents: number, currency: string): number => {
+      const r = rate(currency)
+      if (r === null) {
+        missing.add(currency)
+        return cents
+      }
+      return r === 1 ? cents : Math.round(cents * r)
+    }
+    return { home, missing, rate, toHome }
+  }
+
+  private homeTransactions(accounts: Account[], txns: Transaction[], fx = this.converter()): Transaction[] {
+    const currencyOf = new Map(accounts.map((a) => [a.id, a.currency]))
+    return txns.map((t) => ({ ...t, amount: fx.toHome(t.amount, currencyOf.get(t.accountId) ?? fx.home) }))
+  }
+
+  private foreignCurrencies(): string[] {
+    const home = this.homeCurrency()
+    return this.all<{ currency: string }>('SELECT DISTINCT currency FROM accounts ORDER BY currency')
+      .map((r) => r.currency)
+      .filter((c) => c !== home)
+  }
+
+  getCurrencySettings(): CurrencySettings {
+    const fx = this.converter()
+    const manual = new Set(this.all<{ currency: string }>('SELECT currency FROM fx_manual').map((r) => r.currency))
+    return {
+      homeCurrency: fx.home,
+      ratesFetchedAt: this.getSetting('rates_fetched_at'),
+      ratesDate: this.getSetting('rates_date'),
+      accountCounts: Object.fromEntries(this.all<{ currency: string; n: number }>('SELECT currency, COUNT(*) AS n FROM accounts GROUP BY currency').map((r) => [r.currency, r.n])),
+      rates: this.foreignCurrencies().map((currency) => ({ currency, homePerUnit: fx.rate(currency), manual: manual.has(currency) }))
+    }
+  }
+
+  /** With `moveAccounts`, accounts in the old home currency are relabelled (amounts unchanged), for when the first guess was wrong. */
+  setHomeCurrency(code: string, moveAccounts = false): void {
+    if (!isCurrency(code)) throw new Error(`Unsupported currency ${code}`)
+    const old = this.homeCurrency()
+    this.tx(() => {
+      this.setSetting('home_currency', code)
+      if (moveAccounts) this.run('UPDATE accounts SET currency = ? WHERE currency = ?', [code, old])
+      // Manual rates are quoted in the old home currency.
+      this.run('DELETE FROM fx_manual')
+    })
+    this.changed()
+  }
+
+  setExchangeRate(currency: string, homePerUnit: number | null): void {
+    if (!isCurrency(currency)) throw new Error(`Unsupported currency ${currency}`)
+    if (homePerUnit === null) this.run('DELETE FROM fx_manual WHERE currency = ?', [currency])
+    else {
+      if (!Number.isFinite(homePerUnit) || homePerUnit <= 0) throw new Error('Enter the rate as a positive number, e.g. 0.54')
+      this.run('INSERT INTO fx_manual (currency, home_per_unit) VALUES (?, ?) ON CONFLICT (currency) DO UPDATE SET home_per_unit = excluded.home_per_unit', [
+        currency,
+        homePerUnit
+      ])
+    }
+    this.changed()
+  }
+
+  /** Stores European Central Bank reference rates (units per 1 EUR) published on `date`. */
+  saveRates(date: string, perEur: Record<string, number>, fetchedAt = new Date().toISOString()): void {
+    this.tx(() => {
+      this.run('DELETE FROM fx_rates')
+      for (const [currency, rate] of Object.entries(perEur)) if (Number.isFinite(rate) && rate > 0) this.run('INSERT INTO fx_rates (currency, per_eur) VALUES (?, ?)', [currency, rate])
+      this.setSetting('rates_date', date)
+      this.setSetting('rates_fetched_at', fetchedAt)
+    })
+    this.changed()
+  }
+
+  /** True when some account is in another currency and rates are missing or more than 12 hours old. */
+  ratesStale(now = Date.now()): boolean {
+    if (this.foreignCurrencies().length === 0) return false
+    const fetched = this.getSetting('rates_fetched_at')
+    return !fetched || now - Date.parse(fetched) > 12 * 3600_000
   }
 
   // ---------- maintenance ----------

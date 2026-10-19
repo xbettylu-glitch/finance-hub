@@ -3,7 +3,9 @@ import { writeFileSync } from 'fs'
 import { join } from 'path'
 import type { FinanceApi } from '../shared/types'
 import { openDatabase } from './db'
+import { currencyForLocale } from '../core/currency'
 import { extractPdfText } from './pdf'
+import { fetchEcbRates } from './rates'
 import { FinanceStore } from './store'
 
 const dataPath = process.env.FINANCE_HUB_DATA ?? join(app.getPath('userData'), 'finance-hub.db')
@@ -41,10 +43,14 @@ async function main(): Promise<void> {
     timer = undefined
     save()
   }
-  const store = new FinanceStore(db, () => {
-    if (timer) clearTimeout(timer)
-    timer = setTimeout(flush, 400)
-  })
+  const store = new FinanceStore(
+    db,
+    () => {
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(flush, 400)
+    },
+    currencyForLocale(app.getSystemLocale() || app.getLocale())
+  )
   flush()
 
   const api: FinanceApi = {
@@ -77,6 +83,19 @@ async function main(): Promise<void> {
     loadDemoData: async () => store.loadDemoData(),
     resetAll: async () => store.resetAll(),
     getDataPath: async () => dataPath,
+    getCurrencySettings: async () => store.getCurrencySettings(),
+    setHomeCurrency: async (code, moveAccounts) => store.setHomeCurrency(code, moveAccounts),
+    setExchangeRate: async (currency, homePerUnit) => store.setExchangeRate(currency, homePerUnit),
+    refreshRates: async (force) => {
+      if (!force && !store.ratesStale()) return { updated: false }
+      try {
+        const { date, perEur } = await fetchEcbRates()
+        store.saveRates(date, perEur)
+        return { updated: true }
+      } catch (e) {
+        return { updated: false, error: `Couldn't download exchange rates (${(e as Error).message}). Check your internet connection or enter rates yourself.` }
+      }
+    },
     exportBackup: async () => {
       const win = BrowserWindow.getFocusedWindow()
       const opts = { defaultPath: `finance-hub-backup-${new Date().toISOString().slice(0, 10)}.db`, filters: [{ name: 'SQLite database', extensions: ['db'] }] }

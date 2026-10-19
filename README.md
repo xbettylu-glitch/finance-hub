@@ -14,6 +14,7 @@ A local-first desktop app (macOS, Windows, Linux) that brings all your accounts 
 
 ## Getting your data in
 
+- **Multiple currencies**: each account has its own currency (GBP, EUR, USD, CAD, …), guessed from the statement when importing. Net worth, cash flow, spending and budgets are converted to one main currency (Settings → Currencies) using the European Central Bank's daily reference rates, downloaded from frankfurter.dev (no personal data is sent). You can type your own rate instead. History is converted at the latest rates, and transfers are only matched between accounts in the same currency.
 - **Import statements**: PDF, CSV, OFX, QFX or QBO files downloaded from your bank or card's website.
   - Columns are detected automatically and can be mapped by hand. This covers debit/credit columns, preamble lines, header-less files, DD/MM dates and sign flipping for card exports.
   - OFX/QFX files are matched to the right account by account number, and the statement balance is recorded.

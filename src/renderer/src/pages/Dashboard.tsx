@@ -32,7 +32,7 @@ export function Dashboard({ navigate, onChange, version }: PageProps) {
         <div className="welcome-options">
           <div className="welcome-option">
             <h3>Import statements</h3>
-            <p>Download CSV, OFX or QFX files from your bank or card's website and drop them in.</p>
+            <p>Download PDF, CSV, OFX or QFX statements from your bank or card's website and drop them in.</p>
             <button className="primary" onClick={() => navigate({ page: 'import' })}>
               Import a file
             </button>
@@ -67,7 +67,7 @@ export function Dashboard({ navigate, onChange, version }: PageProps) {
   for (const a of data.accounts) {
     const g = accountGroup(a.type)
     const cur = groups.get(g) ?? { total: 0, accounts: [] }
-    cur.total += a.balance
+    cur.total += a.balanceHome
     cur.accounts.push(a)
     groups.set(g, cur)
   }
@@ -80,7 +80,10 @@ export function Dashboard({ navigate, onChange, version }: PageProps) {
       <div className="page-header">
         <div>
           <h1>Overview</h1>
-          <div className="muted small">As of {shortDate(data.asOf)}</div>
+          <div className="muted small">
+            As of {shortDate(data.asOf)}
+            {data.accounts.some((a) => a.currency !== data.homeCurrency) && ` · totals in ${data.homeCurrency} at the latest exchange rates`}
+          </div>
         </div>
         <div className="actions">
           <select value={data.month} onChange={(e) => setMonth(e.target.value)} aria-label="Month">
@@ -103,6 +106,17 @@ export function Dashboard({ navigate, onChange, version }: PageProps) {
           </span>
           <button className="link" onClick={() => navigate({ page: 'transactions', query: { categoryId: 'uncategorized' } })}>
             Review
+          </button>
+        </div>
+      )}
+
+      {data.missingRates.length > 0 && (
+        <div className="banner warn">
+          <span>
+            No exchange rate yet for {data.missingRates.join(', ')}, so those amounts are counted as {data.homeCurrency} in the totals.
+          </span>
+          <button className="link" onClick={() => navigate({ page: 'settings' })}>
+            Set rates
           </button>
         </div>
       )}
@@ -172,7 +186,7 @@ export function Dashboard({ navigate, onChange, version }: PageProps) {
                       </a>
                       {a.institution && <span className="muted small">&nbsp;· {a.institution}</span>}
                     </div>
-                    <Money cents={a.balance} whole />
+                    <Money cents={a.balance} whole currency={a.currency} />
                   </div>
                 ))}
               </div>
@@ -317,7 +331,7 @@ export function Dashboard({ navigate, onChange, version }: PageProps) {
                   )}
                 </td>
                 <td className="num">
-                  <Money cents={t.amount} colored />
+                  <Money cents={t.amount} colored currency={t.currency} />
                 </td>
               </tr>
             ))}

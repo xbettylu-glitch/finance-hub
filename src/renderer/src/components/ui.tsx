@@ -25,9 +25,10 @@ export function Stat({ label, value, sub, tone }: { label: string; value: ReactN
   )
 }
 
-export function Money({ cents, colored, sign, whole }: { cents: number; colored?: boolean; sign?: boolean; whole?: boolean }) {
+/** Formats cents in `currency`, or in the home currency when omitted. */
+export function Money({ cents, colored, sign, whole, currency }: { cents: number; colored?: boolean; sign?: boolean; whole?: boolean; currency?: string }) {
   const cls = colored ? (cents > 0 ? 'pos' : cents < 0 ? 'neg' : '') : ''
-  return <span className={`money ${cls}`}>{money(cents, { sign, whole })}</span>
+  return <span className={`money ${cls}`}>{money(cents, { sign, whole, currency })}</span>
 }
 
 export function Modal({ title, onClose, children, wide }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean }) {

@@ -47,6 +47,8 @@ export interface Account {
   name: string
   institution: string
   type: AccountType
+  /** ISO 4217 code; the account's amounts are in this currency. */
+  currency: string
   externalId: string | null
   archived: boolean
   createdAt: string
@@ -54,6 +56,8 @@ export interface Account {
 
 export interface AccountWithBalance extends Account {
   balance: number
+  /** `balance` converted to the home currency. */
+  balanceHome: number
   lastActivity: string | null
   transactionCount: number
 }
@@ -62,6 +66,7 @@ export interface NewAccount {
   name: string
   institution?: string
   type: AccountType
+  currency?: string
   externalId?: string | null
   openingBalance?: number
   openingBalanceDate?: string
@@ -89,6 +94,7 @@ export interface Transaction {
 
 export interface TransactionRow extends Transaction {
   accountName: string
+  currency: string
   categoryName: string | null
   categoryColor: string | null
 }
@@ -176,6 +182,8 @@ export interface ParsedStatement {
 
 export interface ImportPreview extends ParsedStatement {
   matchedAccountId: number | null
+  /** Currency printed on the statement, if any. */
+  currency: string | null
   positiveShare: number
 }
 
@@ -251,6 +259,10 @@ export interface BudgetOverviewRow {
 
 export interface DashboardData {
   asOf: string
+  /** Every total below is in this currency; account balances and transactions stay in their own currency. */
+  homeCurrency: string
+  /** Account currencies with no exchange rate yet; their amounts are counted 1:1. */
+  missingRates: string[]
   month: string
   availableMonths: string[]
   accounts: AccountWithBalance[]
@@ -273,11 +285,29 @@ export interface DashboardData {
   recentTransactions: TransactionRow[]
 }
 
+export interface ExchangeRate {
+  currency: string
+  /** Home-currency units per one unit of `currency`, or null when unknown. */
+  homePerUnit: number | null
+  manual: boolean
+}
+
+export interface CurrencySettings {
+  homeCurrency: string
+  /** When the European Central Bank rates were last downloaded. */
+  ratesFetchedAt: string | null
+  ratesDate: string | null
+  /** Accounts per currency. */
+  accountCounts: Record<string, number>
+  /** Currencies used by accounts, other than the home currency. */
+  rates: ExchangeRate[]
+}
+
 export interface FinanceApi {
   getDashboard(month?: string): Promise<DashboardData>
   listAccounts(includeArchived?: boolean): Promise<AccountWithBalance[]>
   createAccount(input: NewAccount): Promise<Account>
-  updateAccount(id: number, patch: Partial<Pick<Account, 'name' | 'institution' | 'type' | 'archived'>>): Promise<void>
+  updateAccount(id: number, patch: Partial<Pick<Account, 'name' | 'institution' | 'type' | 'currency' | 'archived'>>): Promise<void>
   deleteAccount(id: number): Promise<void>
   listBalances(accountId: number): Promise<BalanceSnapshot[]>
   setBalance(accountId: number, date: string, balance: number): Promise<void>
@@ -306,4 +336,11 @@ export interface FinanceApi {
   exportBackup(): Promise<string | null>
   exportTransactionsCsv(): Promise<string | null>
   getDataPath(): Promise<string>
+  getCurrencySettings(): Promise<CurrencySettings>
+  /** With `moveAccounts`, accounts in the old main currency are relabelled to the new one (amounts unchanged). */
+  setHomeCurrency(code: string, moveAccounts?: boolean): Promise<void>
+  /** Sets a manual rate (home-currency units per unit), or clears it with null to use the downloaded rate. */
+  setExchangeRate(currency: string, homePerUnit: number | null): Promise<void>
+  /** Downloads European Central Bank rates when they are stale (or always with `force`). Returns an error message on failure. */
+  refreshRates(force?: boolean): Promise<{ updated: boolean; error?: string }>
 }

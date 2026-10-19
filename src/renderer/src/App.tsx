@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { TxnQuery } from '../../shared/types'
 import { api } from './api'
+import { setDisplayCurrency } from './format'
 import { Accounts } from './pages/Accounts'
 import { Budgets } from './pages/Budgets'
 import { Categories } from './pages/Categories'
@@ -31,12 +32,22 @@ export function App() {
   const [version, setVersion] = useState(0)
   const [uncategorized, setUncategorized] = useState(0)
   const changed = useCallback(() => setVersion((v) => v + 1), [])
+  const [homeCurrency, setHomeCurrency] = useState<string | null>(null)
+
+  useEffect(() => {
+    void api.getCurrencySettings().then((s) => {
+      setDisplayCurrency(s.homeCurrency)
+      setHomeCurrency(s.homeCurrency)
+    })
+    void api.refreshRates().then((r) => r.updated && changed())
+  }, [version, changed])
 
   useEffect(() => {
     void api.listTransactions({ categoryId: 'uncategorized', limit: 1 }).then((r) => setUncategorized(r.total))
   }, [version])
 
   const props = { navigate: setNav, onChange: changed, version }
+  if (!homeCurrency) return null
   return (
     <div className="app">
       <nav className="sidebar">
