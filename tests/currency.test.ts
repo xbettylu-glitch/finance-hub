@@ -101,6 +101,14 @@ describe('multi-currency store', () => {
     expect(fresh.getCurrencySettings().accountCounts).toEqual({ GBP: 1, CAD: 1 })
   })
 
+  it('gives a currency to accounts added by an older app version after the upgrade', () => {
+    const db = new SQL.Database()
+    const first = new FinanceStore(db, () => {}, 'GBP')
+    first.createAccount({ name: 'Old', type: 'credit_card' })
+    db.run("UPDATE accounts SET currency = ''")
+    expect(new FinanceStore(db, () => {}, 'USD').listAccounts()[0].currency).toBe('GBP')
+  })
+
   it('upgrades an existing database: accounts get the home currency', () => {
     const db = new SQL.Database()
     const old = new FinanceStore(db)
