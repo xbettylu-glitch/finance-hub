@@ -50,9 +50,16 @@
     ],
     "mac": {
       "target": [
-        "dmg"
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
       ],
-      "category": "public.app-category.finance"
+      "category": "public.app-category.finance",
+      "identity": null
     },
     "win": {
       "target": [
@@ -64,6 +71,10 @@
         "AppImage"
       ],
       "category": "Finance"
+    },
+    "afterPack": "build/adhoc-sign.cjs",
+    "dmg": {
+      "artifactName": "Finance-Hub-${version}-${arch}.${ext}"
     }
   }
 }

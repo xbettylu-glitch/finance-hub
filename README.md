@@ -24,7 +24,15 @@ A local-first desktop app (macOS, Windows, Linux) that brings all your accounts 
 - **Manual transactions**: for cash spending.
 - **Sample data**: load 12 months of made-up data to explore the app (Settings → Load sample data).
 
-## Running it
+## Install on a Mac
+
+1. Open the [latest release](https://github.com/xbettylu-glitch/finance-hub/releases/latest) and download the `.dmg` for your Mac. Choose `arm64` for Apple Silicon (M1–M4) or `x64` for Intel. To check which you have, open  → About This Mac.
+2. Open the `.dmg` and drag **Finance Hub** into **Applications**.
+3. The first time you open it, macOS says it can't verify the app, because it isn't signed with a paid Apple developer certificate. Click **Done**. Then open **System Settings → Privacy & Security**, scroll down, click **Open Anyway** and confirm. After that it opens normally.
+
+Every change merged into `main` builds a new installer automatically (GitHub Actions → **Mac app**). Bump `version` in `package.json` to publish it as a new release.
+
+## Running it from source
 
 Requires Node.js 20+.
 
