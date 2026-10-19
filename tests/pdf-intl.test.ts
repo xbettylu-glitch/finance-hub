@@ -73,6 +73,19 @@ describe('UK statements', () => {
     expect(parsePdfStatement(text).transactions.map((t) => t.amount)).toEqual([100000, -4567, -450, 3000])
   })
 
+  it('Amex UK: unsigned statement, purchases after a Payments heading are still charges', () => {
+    const text = [
+      'American Express',
+      'Statement Date 5 October 2026',
+      'Payments',
+      'Sep 11 THE NED HOTEL NICKEL BA LONDON 36.64',
+      'Sep 14 APPLE STORE R329 LONDON 349.00',
+      'Oct 02 ASDA STORES IPSWICH 15.00',
+      'Sep 15 AUTOMATIC PAYMENT RECEIVED - THANK YOU 1,770.58'
+    ].join('\n')
+    expect(parsePdfStatement(text).transactions.map((t) => t.amount)).toEqual([-3664, -34900, -1500, 177058])
+  })
+
   it('Yonder: day-first numeric dates on a British statement, £ signs', () => {
     const text = [
       'Yonder',

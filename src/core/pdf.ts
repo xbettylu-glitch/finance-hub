@@ -377,13 +377,6 @@ export function parsePdfStatement(text: string, options: ImportOptions = {}): Pa
   // Revolut and Wise list the newest transaction first, so the balance before a row is on the row below it.
   const newestFirst = known.length > 1 && known[0] > known.at(-1)!
   // Statements that print money out with a minus sign (Wise, many UK banks) show money in unsigned.
-  // Card statements that mark credits themselves (CR or a minus) list every unmarked line as a charge, whatever heading it sits under.
-  const cardMarksCredits =
-    account.isCard &&
-    candidates.some((c) => {
-      const v = amountValue(c.amountToken)
-      return v.explicitCredit || v.explicitNegative
-    })
   const signedAmounts =
     !account.isCard &&
     !candidates.some((c) => /(CR|DR)$/i.test(c.amountToken.trim())) &&
@@ -405,7 +398,9 @@ export function parsePdfStatement(text: string, options: ImportOptions = {}): Pa
       if (explicitCredit) sign = 1
       else if (explicitNegative) sign = account.isCard ? 1 : -1
       else if (account.isCard && CARD_PAYMENT.test(c.description)) sign = 1
-      else if (c.section !== 0 && !cardMarksCredits) sign = c.section
+      // On cards, a "Payments/Credits" heading can be a summary box or page header that never gets closed, so it doesn't make
+      // later lines money in; card credits come from CR / minus markers or payment and refund wording instead.
+      else if (c.section === -1 || (c.section === 1 && !account.isCard)) sign = c.section
       else sign = signedAmounts ? 1 : -1
     }
     let amount = sign * cents
