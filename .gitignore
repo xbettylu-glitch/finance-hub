@@ -4,3 +4,4 @@ release/
 dist/
 *.db
 .DS_Store
+*.tsbuildinfo
