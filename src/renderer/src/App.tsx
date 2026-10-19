@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { Component, useCallback, useEffect, useState, type ReactNode } from 'react'
 import type { TxnQuery } from '../../shared/types'
 import { api } from './api'
 import { setDisplayCurrency } from './format'
@@ -29,19 +29,59 @@ const PAGES: { page: PageName; label: string }[] = [
   { page: 'settings', label: 'Settings' }
 ]
 
+/** Shows what went wrong instead of a blank window when a page crashes. */
+class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  state = { error: null as Error | null }
+  static getDerivedStateFromError(error: Error): { error: Error } {
+    return { error }
+  }
+  render(): ReactNode {
+    const { error } = this.state
+    if (!error) return this.props.children
+    const text = `${error.message}\n\n${error.stack ?? ''}`
+    return (
+      <div className="card" style={{ margin: 24 }}>
+        <h2>Something went wrong</h2>
+        <p className="muted">Your data is safe. Please copy the details below and send them so this can be fixed.</p>
+        <textarea readOnly value={text} rows={12} style={{ width: '100%', fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 12 }} />
+        <p>
+          <button onClick={() => void navigator.clipboard.writeText(text)}>Copy details</button>{' '}
+          <button onClick={() => this.setState({ error: null })}>Try again</button>
+        </p>
+      </div>
+    )
+  }
+}
+
 export function App() {
+  return (
+    <ErrorBoundary>
+      <AppShell />
+    </ErrorBoundary>
+  )
+}
+
+function AppShell() {
   const [nav, setNav] = useState<Nav>({ page: 'dashboard' })
   const [version, setVersion] = useState(0)
   const [uncategorized, setUncategorized] = useState(0)
   const changed = useCallback(() => setVersion((v) => v + 1), [])
   const [homeCurrency, setHomeCurrency] = useState<string | null>(null)
+  const [startError, setStartError] = useState<Error | null>(null)
+  if (startError) throw startError
 
   useEffect(() => {
-    void api.getCurrencySettings().then((s) => {
-      setDisplayCurrency(s.homeCurrency)
-      setHomeCurrency(s.homeCurrency)
-    })
-    void api.refreshRates().then((r) => r.updated && changed())
+    api
+      .getCurrencySettings()
+      .then((s) => {
+        setDisplayCurrency(s.homeCurrency)
+        setHomeCurrency(s.homeCurrency)
+      })
+      .catch((e: Error) => setStartError(e))
+    void api
+      .refreshRates()
+      .then((r) => r.updated && changed())
+      .catch(() => {})
   }, [version, changed])
 
   useEffect(() => {

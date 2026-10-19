@@ -8,7 +8,8 @@ export const setDisplayCurrency = (code: string): void => {
 export const getDisplayCurrency = (): string => displayCurrency
 
 const formatters = new Map<string, Intl.NumberFormat>()
-function formatter(currency: string, style: 'full' | 'whole' | 'compact'): Intl.NumberFormat {
+function formatter(code: string, style: 'full' | 'whole' | 'compact'): Intl.NumberFormat {
+  const currency = /^[A-Z]{3}$/.test(code) ? code : /^[A-Z]{3}$/.test(displayCurrency) ? displayCurrency : 'USD'
   const key = `${currency}|${style}`
   let f = formatters.get(key)
   if (!f) {

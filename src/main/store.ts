@@ -195,6 +195,9 @@ export class FinanceStore {
         this.db.run('PRAGMA user_version = 2')
       })
     }
+    // Older versions of the app don't know about currencies, so accounts they add after the upgrade have none.
+    if (this.get<{ n: number }>("SELECT COUNT(*) AS n FROM accounts WHERE currency = ''")!.n > 0)
+      this.run("UPDATE accounts SET currency = ? WHERE currency = ''", [this.homeCurrency()])
   }
 
   private getSetting(key: string): string | null {
