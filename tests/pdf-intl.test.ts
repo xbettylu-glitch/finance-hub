@@ -148,6 +148,25 @@ describe('UK statements', () => {
     expect(parsePdfStatement(text).transactions.map((t) => t.amount)).toEqual([-3664, -34900, -1500, 177058])
   })
 
+  it('Yonder: "+" refunds are money in, whole-pound amounts and &amp; entities are read', () => {
+    const s = parsePdfStatement(
+      ['Yonder', 'Statement date 12/10/2026', 'Credit limit £3,000.00', 'Date Description Amount',
+        '01/10/2026 Yonder Membership £15', '01/10/2026 Dishoom London £62.00', '03/10/2026 Dishoom London +£31.00',
+        '03/10/2026 Wasabi Sushi &amp; Bento £2.95', '04/10/2026 Yonder reimbursement £10.00', '06/10/2026 Pret A Manger £4.50'
+      ].join('\n'),
+      {},
+      { today: '2026-10-19' }
+    )
+    expect(rows(s)).toEqual([
+      ['2026-10-01', -1500, 'Yonder Membership'],
+      ['2026-10-01', -6200, 'Dishoom London'],
+      ['2026-10-03', 3100, 'Dishoom London'],
+      ['2026-10-03', -295, 'Wasabi Sushi & Bento'],
+      ['2026-10-04', 1000, 'Yonder reimbursement'],
+      ['2026-10-06', -450, 'Pret A Manger']
+    ])
+  })
+
   it('Yonder: day-first numeric dates on a British statement, £ signs', () => {
     const text = [
       'Yonder',
