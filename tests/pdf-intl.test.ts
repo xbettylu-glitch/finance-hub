@@ -7,6 +7,29 @@ import { makePdf, statementPage } from './helpers/makePdf'
 const rows = (s: ReturnType<typeof parsePdfStatement>): [string, number, string][] => s.transactions.map((t) => [t.date, t.amount, t.description])
 
 describe('UK statements', () => {
+  it('Amex UK foreign spend: the sterling amount is the charge, not the foreign one', () => {
+    const s = parsePdfStatement(
+      [
+        'American Express',
+        'Statement Period From 6 April to 5 May 2026',
+        'Date Date Transaction Details Foreign Spend Amount £',
+        'Apr 8 Apr 9 UBER TRIP HTTPS://HELP.UB 128.00 6.03',
+        'SOUTH AFRICAN RAND',
+        'Exchange Rate 21.8803 + Nonsterling Transaction Fee .18',
+        'Apr 9 Apr 9 DELIVEROO PARIS 09 8,50 7.71',
+        'EUROPEAN UNION EURO',
+        'Apr 20 Apr 20 PERK* TRIP LOS ANGELES 456.79'
+      ].join('\n'),
+      {},
+      { today: '2026-10-19' }
+    )
+    expect(rows(s)).toEqual([
+      ['2026-04-08', -603, 'UBER TRIP HTTPS://HELP.UB'],
+      ['2026-04-09', -771, 'DELIVEROO PARIS 09'],
+      ['2026-04-20', -45679, 'PERK* TRIP LOS ANGELES']
+    ])
+  })
+
   it('Amex UK statement period without a year on the start date; small print mentions next year', () => {
     const s = parsePdfStatement(
       [

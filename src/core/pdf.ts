@@ -263,6 +263,8 @@ export function parsePdfStatement(text: string, options: ImportOptions = {}, con
   const account = detectAccount(lines.join('\n'))
   const cardSign = account.isCard ? -1 : 1
   const hasReferenceColumn = /reference\s+(number|no\b|#)/i.test(text)
+  /** Amex UK: "Foreign Spend | Amount £" columns, e.g. "UBER TRIP 128.00 6.03" is R128.00 billed as £6.03. */
+  const hasForeignColumn = /foreign\s+(spend|amount|currency)/i.test(text)
 
   /**
    * Reads candidate transactions. With `useOrphans`, a dated line without an amount takes the description and amount from
@@ -293,6 +295,11 @@ export function parsePdfStatement(text: string, options: ImportOptions = {}, con
       if (amounts.length === 2 && /\d+(\.\d+)?\s?%$/.test(rest)) {
         amounts.shift()
         rest = rest.replace(/\s*\d+(\.\d+)?\s?%$/, '')
+      }
+      if (hasForeignColumn) {
+        if (amounts.length === 2) amounts.shift()
+        // Foreign amounts with a decimal comma ("8,50") aren't amount tokens, so they're left in the description.
+        rest = rest.replace(/\s+\d{1,3}(?:\.\d{3})*,\d{2}$/, '')
       }
       return { rest, amounts }
     }
