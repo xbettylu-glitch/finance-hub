@@ -6,6 +6,7 @@ import { api } from '../api'
 import { Card, Empty, Money, Progress, Stat } from '../components/ui'
 import { money, monthLabel, pct, shortDate, shortMonth } from '../format'
 import { AccountForm } from './Accounts'
+import { InsightList } from './Spending'
 
 const axisMoney = (v: number): string => money(v, { compact: true })
 const tooltipMoney = (v: number): string => money(v, { whole: true })
@@ -148,6 +149,20 @@ export function Dashboard({ navigate, onChange, version }: PageProps) {
           sub="Cash ÷ avg spending"
         />
       </div>
+
+      {data.insights.length > 0 && (
+        <Card
+          title="Ways to save"
+          className="mb"
+          action={
+            <button className="link" onClick={() => navigate({ page: 'spending' })}>
+              See spending breakdown
+            </button>
+          }
+        >
+          <InsightList insights={data.insights} navigate={navigate} limit={3} />
+        </Card>
+      )}
 
       <div className="grid two">
         <Card title="Net worth">

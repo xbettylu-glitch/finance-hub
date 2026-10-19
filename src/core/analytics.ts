@@ -6,13 +6,16 @@ import type {
   CashFlowPoint,
   Category,
   CategorySpend,
+  Insight,
+  MerchantSeries,
   NetWorthPoint,
   RecurringFrequency,
   RecurringItem,
+  SpendingSeries,
   Transaction
 } from '../shared/types'
 import { isLiability } from '../shared/types'
-import { addDays, daysBetween, monthEnd, monthOf, monthRange } from './dates'
+import { addDays, addMonths, daysBetween, daysInMonth, monthEnd, monthOf, monthRange } from './dates'
 
 /**
  * Balance history for one account. Balance on a date = anchor snapshot + transactions between
@@ -250,4 +253,214 @@ export function detectRecurring(txns: Transaction[], categories: Category[], asO
     })
   }
   return out.sort((a, b) => b.monthlyCost - a.monthlyCost)
+}
+
+/** Spending per category, per merchant and fixed vs flexible for each of `months` months ending at `lastMonth`. */
+export function spendingReport(
+  txns: Transaction[],
+  categories: Category[],
+  lastMonth: string,
+  months: number,
+  fixedPayees: Set<string>,
+  categoryId?: number | 'uncategorized'
+): { months: string[]; averageMonths: number; totals: number[]; fixed: number[]; flexible: number[]; categories: SpendingSeries[]; merchants: MerchantSeries[] } {
+  const kinds = kindMap(categories)
+  const byId = new Map(categories.map((c) => [c.id, c]))
+  const range = monthRange(lastMonth, months)
+  const idx = new Map(range.map((m, i) => [m, i]))
+  const zeros = (): number[] => range.map(() => 0)
+  const totals = zeros()
+  const fixed = zeros()
+  const flexible = zeros()
+  const byCategory = new Map<number | null, number[]>()
+  const byMerchant = new Map<string, { monthly: number[]; count: number }>()
+  for (const t of txns) {
+    const i = idx.get(monthOf(t.date))
+    if (i === undefined || classify(t, kinds) !== 'expense') continue
+    if (categoryId !== undefined && (categoryId === 'uncategorized' ? t.categoryId !== null : t.categoryId !== categoryId)) continue
+    const spend = -t.amount
+    totals[i] += spend
+    ;(fixedPayees.has(t.payee) ? fixed : flexible)[i] += spend
+    const c = byCategory.get(t.categoryId) ?? zeros()
+    c[i] += spend
+    byCategory.set(t.categoryId, c)
+    if (t.amount < 0) {
+      const m = byMerchant.get(t.payee) ?? { monthly: zeros(), count: 0 }
+      m.monthly[i] += spend
+      m.count++
+      byMerchant.set(t.payee, m)
+    }
+  }
+  const first = totals.findIndex((v) => v !== 0)
+  const averageMonths = first < 0 ? 0 : range.length - first
+  const sum = (xs: number[]): number => xs.reduce((s, v) => s + v, 0)
+  return {
+    months: range,
+    averageMonths,
+    totals,
+    fixed,
+    flexible,
+    categories: [...byCategory.entries()]
+      .map(([id, monthly]) => {
+        const c = id != null ? byId.get(id) : undefined
+        const total = sum(monthly)
+        return { categoryId: id, name: c?.name ?? 'Uncategorized', color: c?.color ?? '#9ca3af', monthly, total, average: averageMonths ? Math.round(total / averageMonths) : 0 }
+      })
+      .filter((c) => c.total > 0)
+      .sort((x, y) => y.total - x.total),
+    merchants: [...byMerchant.entries()]
+      .map(([payee, m]) => ({ payee, monthly: m.monthly, total: sum(m.monthly), count: m.count }))
+      .sort((x, y) => y.total - x.total)
+      .slice(0, 20)
+  }
+}
+
+/**
+ * Suggestions on where to cut back, biggest estimated monthly saving first: categories running above their usual level,
+ * regular bills and price rises, merchants with growing spend, many small purchases, budgets heading over, and a low
+ * savings rate. `lastMonthFlow` is income and spending for the last complete month.
+ */
+export function spendingInsights(input: {
+  txns: Transaction[]
+  categories: Category[]
+  recurring: RecurringItem[]
+  budgets: BudgetProgress[]
+  lastMonthFlow: CashFlowPoint
+  asOf: string
+  currency: string
+}): Insight[] {
+  const { txns, categories, recurring, budgets, lastMonthFlow, asOf, currency } = input
+  const whole = new Intl.NumberFormat(undefined, { style: 'currency', currency, minimumFractionDigits: 0, maximumFractionDigits: 0 })
+  const exact = new Intl.NumberFormat(undefined, { style: 'currency', currency })
+  const fmt = (c: number): string => whole.format(c / 100)
+  const fmt2 = (c: number): string => exact.format(c / 100)
+  const kinds = kindMap(categories)
+  const month = monthOf(asOf)
+  const day = +asOf.slice(8, 10)
+  const pace = daysInMonth(+asOf.slice(0, 4), +asOf.slice(5, 7)) / Math.max(day, 1)
+  const expenses = txns.filter((t) => classify(t, kinds) === 'expense' && t.amount < 0)
+  const recurringPayees = new Set(recurring.map((r) => r.payee))
+  const out: Insight[] = []
+
+  // Early in the month there's too little to project, so look at last month instead.
+  const current = day >= 10
+  const target = current ? month : addMonths(month, -1)
+  const scale = current ? pace : 1
+  const when = current ? 'this month' : 'last month'
+  // Only everyday spending is projected forward; bills already paid this month (rent, mortgage) are counted as they are.
+  const recurringSpend = new Map(
+    spendingReport(
+      txns.filter((t) => recurringPayees.has(t.payee)),
+      categories,
+      target,
+      1,
+      new Set()
+    ).categories.map((c) => [c.categoryId, c.monthly[0]])
+  )
+  for (const c of spendingReport(txns, categories, target, 7, new Set()).categories) {
+    const history = c.monthly.slice(0, 6).filter((v) => v > 0)
+    if (history.length < 2) continue
+    const avg = history.reduce((s, v) => s + v, 0) / history.length
+    const fixedPart = recurringSpend.get(c.categoryId) ?? 0
+    const projected = (c.monthly[6] - fixedPart) * scale + fixedPart
+    const over = Math.round(projected - avg)
+    if (projected > avg * 1.2 && over >= 2000)
+      out.push({
+        id: `category-${c.categoryId}`,
+        kind: 'category',
+        title: `${c.name} is above your usual`,
+        detail: `${current ? 'On track for' : 'You spent'} ${fmt(projected)} ${when}, against a ${fmt(avg)} monthly average.`,
+        monthlySaving: over,
+        categoryId: c.categoryId
+      })
+  }
+
+  if (recurring.length) {
+    const total = recurring.reduce((s, r) => s + r.monthlyCost, 0)
+    const biggest = recurring
+      .slice(0, 3)
+      .map((r) => `${r.payee} (${fmt(r.monthlyCost)})`)
+      .join(', ')
+    out.push({
+      id: 'subscriptions',
+      kind: 'subscription',
+      title: `${fmt(total)} a month on ${recurring.length} regular bill${recurring.length === 1 ? '' : 's'} and subscription${recurring.length === 1 ? '' : 's'}`,
+      detail: `The biggest are ${biggest}. Cancel any you no longer use, and check whether a cheaper plan exists.`,
+      monthlySaving: null
+    })
+  }
+  for (const r of recurring) {
+    const list = expenses.filter((t) => t.payee === r.payee).sort((x, y) => x.date.localeCompare(y.date))
+    if (list.length < 2) continue
+    const before = -list[list.length - 2].amount
+    const latest = -list[list.length - 1].amount
+    if (latest > before * 1.05 && latest - before >= 100)
+      out.push({
+        id: `price-${r.payee}`,
+        kind: 'price_rise',
+        title: `${r.payee} has gone up`,
+        detail: `The latest charge was ${fmt2(latest)}, up from ${fmt2(before)}. Worth checking for a cheaper plan or a retention offer.`,
+        monthlySaving: Math.round(((latest - before) * r.monthlyCost) / Math.max(r.amount, 1)),
+        payee: r.payee
+      })
+  }
+
+  const merchants = spendingReport(txns, categories, addMonths(month, -1), 6, new Set()).merchants
+  for (const m of merchants) {
+    if (recurringPayees.has(m.payee)) continue
+    const before = (m.monthly[0] + m.monthly[1] + m.monthly[2]) / 3
+    const recent = (m.monthly[3] + m.monthly[4] + m.monthly[5]) / 3
+    if (before > 0 && recent > before * 1.5 && recent - before >= 3000)
+      out.push({
+        id: `merchant-${m.payee}`,
+        kind: 'merchant',
+        title: `More spending at ${m.payee}`,
+        detail: `${fmt(recent)} a month over the last 3 months, up from ${fmt(before)} in the 3 months before.`,
+        monthlySaving: Math.round(recent - before),
+        payee: m.payee
+      })
+  }
+
+  const since = addDays(asOf, -30)
+  const small = expenses.filter((t) => t.date > since && t.date <= asOf && -t.amount < 1000 && !recurringPayees.has(t.payee))
+  if (small.length >= 10) {
+    const total = small.reduce((s, t) => s - t.amount, 0)
+    out.push({
+      id: 'small-purchases',
+      kind: 'small',
+      title: `${small.length} small purchases under ${fmt(1000)} in the last 30 days`,
+      detail: `Coffees, snacks and the like added up to ${fmt(total)}. Cutting half of them would save about ${fmt(total / 2)} a month.`,
+      monthlySaving: Math.round(total / 2)
+    })
+  }
+
+  if (day >= 5)
+    for (const b of budgets) {
+      const projected = b.spent * pace
+      if (projected > b.budget * 1.05)
+        out.push({
+          id: `budget-${b.categoryId}`,
+          kind: 'budget',
+          title: `${b.name} is heading over budget`,
+          detail: `${fmt(b.spent)} spent of ${fmt(b.budget)} so far; at this pace about ${fmt(projected)} by the end of the month.`,
+          monthlySaving: Math.round(projected - b.budget),
+          categoryId: b.categoryId
+        })
+    }
+
+  const { income, expenses: spent } = lastMonthFlow
+  if (income > 0) {
+    const kept = income - spent
+    const rate = kept / income
+    if (rate < 0.2)
+      out.push({
+        id: 'savings-rate',
+        kind: 'savings',
+        title: kept < 0 ? `You spent ${fmt(-kept)} more than you earned last month` : `You kept ${Math.round(rate * 100)}% of your income last month`,
+        detail: `A common target is to save 20% of income. Spending ${fmt(0.2 * income - kept)} less a month would get you there.`,
+        monthlySaving: Math.round(0.2 * income - kept)
+      })
+  }
+
+  return out.sort((x, y) => (y.monthlySaving ?? 0) - (x.monthlySaving ?? 0))
 }

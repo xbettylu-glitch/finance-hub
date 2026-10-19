@@ -142,3 +142,11 @@ tr.excluded td:not(:first-child) { opacity: 0.45; text-decoration: line-through;
 .extracted-text { margin-bottom: 16px; }
 .extracted-text summary { cursor: pointer; font-weight: 600; margin-bottom: 8px; }
 .extracted-text textarea { width: 100%; font-family: ui-monospace, Menlo, monospace; font-size: 12px; margin-bottom: 8px; }
+.insight { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 10px 0; border-bottom: 1px solid #eef2f7; }
+.insight:last-of-type { border-bottom: none; }
+.insight-side { display: flex; align-items: center; gap: 12px; white-space: nowrap; }
+.trend { display: inline-flex; align-items: flex-end; gap: 2px; height: 24px; width: 120px; }
+.trend span { flex: 1; background: var(--primary); opacity: 0.55; border-radius: 1px; min-height: 2px; }
+tr.clickable { cursor: pointer; }
+tr.clickable:hover td { background: #f8fafc; }
+.filters { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }

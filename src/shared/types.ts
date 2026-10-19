@@ -257,8 +257,64 @@ export interface BudgetOverviewRow {
   average: number
 }
 
+export interface SpendingQuery {
+  /** How many months to show, ending at `endMonth` (default 12). */
+  months?: number
+  endMonth?: string
+  accountId?: number
+  categoryId?: number | 'uncategorized'
+}
+
+export interface SpendingSeries {
+  categoryId: number | null
+  name: string
+  color: string
+  /** Spending per month, aligned with `SpendingReport.months`. */
+  monthly: number[]
+  total: number
+  average: number
+}
+
+export interface MerchantSeries {
+  payee: string
+  monthly: number[]
+  total: number
+  count: number
+}
+
+export type InsightKind = 'category' | 'subscription' | 'price_rise' | 'merchant' | 'small' | 'budget' | 'savings'
+
+/** A suggestion on where to spend less, worked out from the user's own transactions. */
+export interface Insight {
+  id: string
+  kind: InsightKind
+  title: string
+  detail: string
+  /** Rough monthly saving in the home currency, when one can be estimated. */
+  monthlySaving: number | null
+  categoryId?: number | null
+  payee?: string
+}
+
+export interface SpendingReport {
+  homeCurrency: string
+  availableMonths: string[]
+  months: string[]
+  /** Months from the first one with any spending; used for averages. */
+  averageMonths: number
+  totals: number[]
+  /** Spending at recurring bills and subscriptions vs everything else, per month. */
+  fixed: number[]
+  flexible: number[]
+  categories: SpendingSeries[]
+  merchants: MerchantSeries[]
+  insights: Insight[]
+}
+
 export interface DashboardData {
   asOf: string
+  /** The top suggestions on where to cut back. */
+  insights: Insight[]
   /** Every total below is in this currency; account balances and transactions stay in their own currency. */
   homeCurrency: string
   /** Account currencies with no exchange rate yet; their amounts are counted 1:1. */
@@ -327,6 +383,7 @@ export interface FinanceApi {
   listBudgets(): Promise<Budget[]>
   setBudget(categoryId: number, amount: number): Promise<void>
   getBudgetOverview(month?: string): Promise<{ month: string; rows: BudgetOverviewRow[] }>
+  getSpendingReport(query?: SpendingQuery): Promise<SpendingReport>
   /** Returns the text of a PDF statement, one visual line per line, for `previewImport`/`commitImport`. */
   extractPdfText(data: Uint8Array, password?: string): Promise<string>
   previewImport(filename: string, text: string, options: ImportOptions): Promise<ImportPreview>

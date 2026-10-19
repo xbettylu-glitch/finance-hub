@@ -77,6 +77,7 @@ async function main(): Promise<void> {
     listBudgets: async () => store.listBudgets(),
     setBudget: async (categoryId, amount) => store.setBudget(categoryId, amount),
     getBudgetOverview: async (month) => store.getBudgetOverview(month),
+    getSpendingReport: async (query) => store.getSpendingReport(query),
     extractPdfText: async (data, password) => extractPdfText(data, password),
     previewImport: async (filename, text, options) => store.previewImport(filename, text, options),
     commitImport: async (request) => store.commitImport(request),
