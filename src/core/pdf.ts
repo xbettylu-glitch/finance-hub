@@ -141,9 +141,10 @@ function detectDmy(lines: string[], format: DateFormat | undefined, british: boo
   if (format === 'MDY' || format === 'YMD') return false
   let dmy = british
   for (const line of lines) {
-    const m = /^(\d{1,2})[/.-](\d{1,2})(?:[/.-]\d{2,4})?(?![\d/.-])/.exec(line)
-    if (!m) continue
-    if (+m[2] > 12) return false
+    const m = /^(\d{1,2})([/.-])(\d{1,2})([/.-]\d{2,4})?(?![\d/.-])/.exec(line)
+    // "12.99" or "5.20" at the start of a line is an amount, not a date.
+    if (!m || (m[2] === '.' && !m[4])) continue
+    if (+m[3] > 12) return false
     if (+m[1] > 12) dmy = true
   }
   return dmy
@@ -247,7 +248,7 @@ export function parsePdfStatement(text: string, options: ImportOptions = {}, con
     }
   }
 
-  const dmy = detectDmy(lines, options.dateFormat, UK_HINT.test(text))
+  const dmy = detectDmy(lines, options.dateFormat, UK_HINT.test(text) || options.dayFirst === true)
   const dateFormat: DateFormat = dmy ? 'DMY' : 'MDY'
   const found = referenceDate(lines, dateFormat, today)
   const fromName = context.filename ? dateFromFilename(context.filename) : null

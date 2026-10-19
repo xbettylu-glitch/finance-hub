@@ -112,7 +112,7 @@ export function parseCsv(text: string, options: ImportOptions = {}): ParsedState
   }
 
   const dateFormat: DateFormat =
-    options.dateFormat && options.dateFormat !== 'auto' ? options.dateFormat : detectDateFormat(rows.map((r) => cell(r, mapping.date)))
+    options.dateFormat && options.dateFormat !== 'auto' ? options.dateFormat : resolveDateFormat(detectDateFormat(rows.map((r) => cell(r, mapping.date))), options.dayFirst)
 
   const amounts = rows.map((r) => {
     if (mapping.amount !== undefined) return parseAmount(cell(r, mapping.amount))
@@ -154,4 +154,10 @@ export function parseCsv(text: string, options: ImportOptions = {}): ParsedState
   }
 
   return { format: 'csv', transactions, headers, mapping, dateFormat, ledgerBalance, skippedRows, errors }
+}
+
+/** Ambiguous files get one consistent order, so 05/10 and 13/10 aren't read in different orders. */
+function resolveDateFormat(detected: DateFormat, dayFirst: boolean | undefined): DateFormat {
+  if (detected !== 'auto') return detected
+  return dayFirst ? 'DMY' : 'MDY'
 }

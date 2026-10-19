@@ -7,6 +7,14 @@ import { makePdf, statementPage } from './helpers/makePdf'
 const rows = (s: ReturnType<typeof parsePdfStatement>): [string, number, string][] => s.transactions.map((t) => [t.date, t.amount, t.description])
 
 describe('UK statements', () => {
+  it('UK day-first dates are not flipped by amounts at the start of a line', () => {
+    const s = parsePdfStatement(
+      ['American Express', 'Statement Date 14/10/2026', 'Balance £434.10', '5.20', '05/10 TESCO STORES 45.67', '06/10 BOOTS 3.20'].join('\n')
+    )
+    expect(s.dateFormat).toBe('DMY')
+    expect(rows(s).map((r) => r[0])).toEqual(['2026-10-05', '2026-10-06'])
+  })
+
   it('Amex UK: £ amounts, CR payments, wrapped descriptions, footnote markers', async () => {
     const page = statementPage([
       [[40, 'American Express']],
