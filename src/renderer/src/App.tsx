@@ -62,7 +62,14 @@ export function App() {
 }
 
 function AppShell() {
-  const [nav, setNav] = useState<Nav>({ page: 'dashboard' })
+  const [visited, setVisited] = useState<Nav[]>([{ page: 'dashboard' }])
+  const nav = visited[visited.length - 1]
+  const previous = visited.length > 1 ? visited[visited.length - 2] : null
+  const navigate = useCallback<Navigate>(
+    (next) => setVisited((v) => (JSON.stringify(v[v.length - 1]) === JSON.stringify(next) ? v : [...v, next].slice(-50))),
+    []
+  )
+  const back = useCallback(() => setVisited((v) => (v.length > 1 ? v.slice(0, -1) : v)), [])
   const [version, setVersion] = useState(0)
   const [uncategorized, setUncategorized] = useState(0)
   const changed = useCallback(() => setVersion((v) => v + 1), [])
@@ -88,7 +95,25 @@ function AppShell() {
     void api.listTransactions({ categoryId: 'uncategorized', limit: 1 }).then((r) => setUncategorized(r.total))
   }, [version])
 
-  const props = { navigate: setNav, onChange: changed, version }
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if ((e.metaKey && e.key === '[') || (e.altKey && e.key === 'ArrowLeft')) {
+        e.preventDefault()
+        back()
+      }
+    }
+    const onMouse = (e: MouseEvent): void => {
+      if (e.button === 3) back()
+    }
+    window.addEventListener('keydown', onKey)
+    window.addEventListener('mouseup', onMouse)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('mouseup', onMouse)
+    }
+  }, [back])
+
+  const props = { navigate, onChange: changed, version }
   if (!homeCurrency) return null
   return (
     <div className="app">
@@ -97,7 +122,7 @@ function AppShell() {
           <span className="brand-mark" /> Finance Hub
         </div>
         {PAGES.map((p) => (
-          <button key={p.page} className={`nav-item ${nav.page === p.page ? 'active' : ''}`} onClick={() => setNav({ page: p.page })}>
+          <button key={p.page} className={`nav-item ${nav.page === p.page ? 'active' : ''}`} onClick={() => navigate({ page: p.page })}>
             {p.label}
             {p.page === 'transactions' && uncategorized > 0 && <span className="nav-badge">{uncategorized}</span>}
           </button>
@@ -105,6 +130,9 @@ function AppShell() {
         <div className="sidebar-footer">Your data stays on this computer. Nothing is uploaded.</div>
       </nav>
       <main className="main">
+        <button className="back-button" onClick={back} disabled={!previous} title="Back (⌘[)">
+          ← {previous ? `Back to ${PAGES.find((p) => p.page === previous.page)?.label ?? 'previous page'}` : 'Back'}
+        </button>
         {nav.page === 'dashboard' && <Dashboard {...props} />}
         {nav.page === 'spending' && <Spending {...props} />}
         {nav.page === 'accounts' && <Accounts {...props} />}
